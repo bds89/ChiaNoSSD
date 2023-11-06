@@ -10,7 +10,6 @@ setup(
         'python-telegram-bot[job-queue]',
         'PyYAML',
         'pyshortcuts',
-        'symbol',
         'termcolor'
 ],
     entry_points={
