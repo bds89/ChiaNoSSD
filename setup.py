@@ -9,7 +9,9 @@ setup(
         'psutil',
         'python-telegram-bot[job-queue]',
         'PyYAML',
-        'pyshortcuts'
+        'pyshortcuts',
+        'symbol',
+        'termcolor'
 ],
     entry_points={
         'console_scripts': ['chia-nossd=chia-nossd.__main__:main',
