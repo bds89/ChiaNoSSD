@@ -20,10 +20,10 @@ Control and monitoring for NoSSD Chia pool client.
   ```
 Если требуется создание ярлыков после установки, выполните:
   ```bash
-  chia-nossd_shortcut
+  chia_nossd_shortcut
   ```
 
 Запуск возможен либо с ярлыка, либо командой:
   ```bash
-  chia-nossd
+  chia_nossd
   ```
