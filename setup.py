@@ -13,8 +13,8 @@ setup(
         'termcolor'
 ],
     entry_points={
-        'console_scripts': ['chia-nossd=chia-nossd.__main__:main',
-                            'chia-nossd_shortcut=chia-nossd.__main__:create_shortcut'],
+        'console_scripts': ['chianossd=chia_nossd.__main__:main',
+                            'chianossd_shortcut=chia_nossd.__main__:create_shortcut'],
     },
     url='https://github.com/bds89/ChiaNoSSD',
     license='',
