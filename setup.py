@@ -16,7 +16,7 @@ setup(
         'console_scripts': ['chia-nossd=chia-nossd.__main__:main',
                             'chia-nossd_shortcut=chia-nossd.__main__:create_shortcut'],
     },
-    url='',
+    url='https://github.com/bds89/ChiaNoSSD',
     license='',
     author='bds89',
     author_email='bds89@mail.ru',
