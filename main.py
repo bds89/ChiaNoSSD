@@ -695,56 +695,8 @@ async def error_log_handler(context: CallbackContext):
         else:
             await tcp_client(CONFIG["NODES"][0], 2605, text, False)
 
+
 def main() -> None:
-    dir_script = get_script_dir()
-
-    # Config load
-    with open(dir_script + "/config.yaml") as f:
-        CONFIG = yaml.load(f.read(), Loader=yaml.FullLoader)
-    if not "CONFIG" in locals():
-        CONFIG = {}
-    if "PASSWORD" not in CONFIG:
-        CONFIG["PASSWORD"] = "12345"
-    if "RUN_AT_STARTUP" not in CONFIG:
-        CONFIG["RUN_AT_STARTUP"] = True
-    if "SLAVE_PC" not in CONFIG:
-        CONFIG["SLAVE_PC"] = False
-
-    # Create async QUEUEs
-    NoSSD_err_queue = asyncio.Queue()
-    NoSSD_work_queue = asyncio.Queue()
-
-    if not CONFIG["SLAVE_PC"]:
-        # DB CONNECT
-        DB_PATCH = dir_script + '/users.db'
-        sqlite_connection = sqlite3.connect(DB_PATCH)
-        cursor = sqlite_connection.cursor()
-        try:
-            cursor.execute("""CREATE TABLE if not exists users
-                            (id integer NOT NULL UNIQUE, name text, surname text, auth text, tryn integer, notify text)
-                        """)
-            sqlite_connection.commit()
-        except Exception as e:
-            logger.error("Exception: %s at DB connect.", e)
-        sqlite_connection.close()
-
-    # Run miner thread
-    if "NoSSD_PATCH" in CONFIG:
-        command = str(CONFIG["NoSSD_PATCH"]) + "/client "
-        command += str(CONFIG["NoSSD_PARAMS"])
-        if CONFIG["RUN_AT_STARTUP"]:
-            RUN_STATE = START
-        else:
-            RUN_STATE = IDLE
-        NoSSD_thread = threading.Thread(target=read_nossd_log, args=(command, "out",))
-        NoSSD_thread.start()
-
-    if CONFIG["SLAVE_PC"]:
-        asyncio.run(main_slave())
-    else:
-        main_master()
-
-def main_master() -> None:
     """Run the bot."""
     application = Application.builder().token(CONFIG["BOT_TOKEN"]).concurrent_updates(10).build()
 
@@ -901,4 +853,50 @@ def read_nossd_log(command, std_type):
 
 
 if __name__ == "__main__":
-    main()
+    dir_script = get_script_dir()
+
+    # Config load
+    with open(dir_script + "/config.yaml") as f:
+        CONFIG = yaml.load(f.read(), Loader=yaml.FullLoader)
+    if not "CONFIG" in locals():
+        CONFIG = {}
+    if "PASSWORD" not in CONFIG:
+        CONFIG["PASSWORD"] = "12345"
+    if "RUN_AT_STARTUP" not in CONFIG:
+        CONFIG["RUN_AT_STARTUP"] = True
+    if "SLAVE_PC" not in CONFIG:
+        CONFIG["SLAVE_PC"] = False
+
+    # Create async QUEUEs
+    NoSSD_err_queue = asyncio.Queue()
+    NoSSD_work_queue = asyncio.Queue()
+
+    if not CONFIG["SLAVE_PC"]:
+        # DB CONNECT
+        DB_PATCH = dir_script + '/users.db'
+        sqlite_connection = sqlite3.connect(DB_PATCH)
+        cursor = sqlite_connection.cursor()
+        try:
+            cursor.execute("""CREATE TABLE if not exists users
+                            (id integer NOT NULL UNIQUE, name text, surname text, auth text, tryn integer, notify text)
+                        """)
+            sqlite_connection.commit()
+        except Exception as e:
+            logger.error("Exception: %s at DB connect.", e)
+        sqlite_connection.close()
+
+    # Run miner thread
+    if "NoSSD_PATCH" in CONFIG:
+        command = str(CONFIG["NoSSD_PATCH"]) + "/client "
+        command += str(CONFIG["NoSSD_PARAMS"])
+        if CONFIG["RUN_AT_STARTUP"]:
+            RUN_STATE = START
+        else:
+            RUN_STATE = IDLE
+        NoSSD_thread = threading.Thread(target=read_nossd_log, args=(command, "out",))
+        NoSSD_thread.start()
+
+    if CONFIG["SLAVE_PC"]:
+        asyncio.run(main_slave())
+    else:
+        main()
