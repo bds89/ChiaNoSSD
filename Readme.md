@@ -51,7 +51,7 @@ this parameter can be specified explicitly.Can be removed if you only have one n
 ```bash
 sudo apt-get install smartmontools
 ```
-- for collect gpu's params you must install a `nvidia drivers`, not necessary
+- for collect gpu's params you must install a `nvidia drivers`, not necessary. For test try:
 ```bash
-sudo apt-get install smartmontools
+nvidia-smi
 ```
