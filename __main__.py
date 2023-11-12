@@ -13,9 +13,10 @@ import sys
 import threading
 import time
 import yaml
+import xmltodict
 
 import psutil
-from telegram import ReplyKeyboardRemove, Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import ReplyKeyboardRemove, Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -195,13 +196,6 @@ class Users:
 
 AUTH, ROOT, SETTINGS, SET_SETTINGS = range(4)
 
-standart_keyboard = [
-    [
-        InlineKeyboardButton("Status", callback_data="miner_status"),
-        InlineKeyboardButton("System info", callback_data="sys_info"),
-    ],
-]
-
 
 async def tcp_server(reader, writer, context):
     addr = writer.get_extra_info('peername')
@@ -211,39 +205,42 @@ async def tcp_server(reader, writer, context):
         await writer.wait_closed()
 
     else:
-        # try:
-            recieved_data = await reader.read(1*1000000)
+        try:
+            recieved_data = await reader.read(1 * 1000000)
             recieved_message = pickle.loads(recieved_data)
             update = Update(0)
             send_message = {"code": 400, "data": "Can't handle this request"}
             if recieved_message["code"] == 200:
                 if recieved_message["data"] == "miner_status":
-                    send_message = await miner_status(update=update, context=context, slave=True)
-                    print(send_message)
+                    send_message = {"code": 200, "data": await miner_status(update=update, context=context, slave=True)}
                 elif recieved_message["data"] == "sys_info":
-                    send_message = await sys_info(update=update, context=context, slave=True)
+                    send_message = {"code": 200, "data": await sys_info(update=update, context=context, slave=True)}
+                elif recieved_message["data"] == "farm_status":
+                    send_message = {"code": 200, "data": await farm_status(update=update, context=context, slave=True)}
                 elif recieved_message["data"] == "/run":
-                    send_message = await miner_control(update=update, context=context, slave="/run")
+                    send_message = {"code": 200,
+                                    "data": await miner_control(update=update, context=context, slave="/run")}
                 elif recieved_message["data"] == "/stop":
-                    send_message = await miner_control(update=update, context=context, slave="/stop")
+                    send_message = {"code": 200,
+                                    "data": await miner_control(update=update, context=context, slave="/stop")}
                 elif recieved_message["data"] == "/kill":
-                    send_message = await miner_control(update=update, context=context, slave="/kill")
+                    send_message = {"code": 200,
+                                    "data": await miner_control(update=update, context=context, slave="/kill")}
                 else:
                     warning_message = recieved_message["data"]
-                    node = CONFIG["NODES"].index(addr[0])
+                    node = CONFIG["NODES"].index(addr[0]) + 1
                     await send_message_all(context, f"NODE {node} {warning_message}")
                     send_message = {"code": 200, "data": "OK"}
 
-            send_data = pickle.dumps(send_message)
-            writer.write(send_data)
-            await writer.drain()
+                send_data = pickle.dumps(send_message)
+                writer.write(send_data)
+                await writer.drain()
+                writer.close()
+                await writer.wait_closed()
+        except Exception as e:
+            logger.error(f"can't process the received request. {e}")
             writer.close()
             await writer.wait_closed()
-        # except Exception as e:
-        #     logger.error(f"can't process the received request. {e}")
-        #     writer.close()
-        #     await writer.wait_closed()
-
 
 
 async def start_tcp_server(context: CallbackContext = None):
@@ -269,23 +266,22 @@ async def start_tcp_server(context: CallbackContext = None):
         await server.serve_forever()
 
 
-async def tcp_client(host, port, message, comand=False):
+async def tcp_client(host, port, message, comand=False) -> any:
     try:
         reader, writer = await asyncio.open_connection(
             host, port)
     except(ConnectionRefusedError):
-        logger.error("ConnectionRefusedError")
-        return
-
+        logger.error(f"ConnectionRefusedError {host}")
+        return f"ConnectionRefusedError {host}"
     writer.write(pickle.dumps(message))
     await writer.drain()
 
     fut = reader.read()
     try:
-        data = await asyncio.wait_for(fut, 5)
+        data = await asyncio.wait_for(fut, 30)
     except asyncio.exceptions.TimeoutError:
-        logger.error("TimeoutError")
-        return
+        logger.error(f"TimeoutError {host}")
+        return f"TimeoutError {host}"
 
     answer = pickle.loads(data)
     if comand:
@@ -294,7 +290,9 @@ async def tcp_client(host, port, message, comand=False):
         else:
             return "No response from slave PC"
     else:
-        if answer["code"] != 200 or answer["data"] != "OK": logger.error("Error sending message to master PC")
+        if answer["code"] != 200 or answer["data"] != "OK":
+            logger.error("Error sending message to master PC")
+            return "Error sending message to master PC"
 
     writer.close()
     await writer.wait_closed()
@@ -310,22 +308,46 @@ def get_script_dir(follow_symlinks=True):
     return os.path.dirname(path)
 
 
-def num_to_scale(value, numsimb):
-    # Type 1: ▓▓▓▓▓▓▓▓░░░░░░░░
-    simbols = round((value / 100) * numsimb)
-    hole = round(numsimb - simbols)
-    if simbols > numsimb:
-        simbols = numsimb
-    i = 0
-    text = ""
-    while i < simbols:
-        text += "▓"
-        i += 1
-    while i < numsimb:
-        text += "░"
-        i += 1
-    text += ""
-    return (text)
+def num_to_scale(percent_value, numsimb=15, add_percent=True, prefix="", value="", si=""):
+    output_text = ""
+    if percent_value > 100: percent_value_scale = 100
+    else: percent_value_scale = percent_value
+    scale = "<s>"
+    blocks = ["⠀", "▏", "▎", "▍", "▌", "▋", "▊", "█"]
+    discretization = numsimb*7
+    simbols = (percent_value_scale/100) * discretization
+    full_simbols = int(simbols // 7)
+    half_simbol = int(simbols % 7)
+    for i in range(full_simbols):
+        scale += blocks[7]
+    if percent_value_scale != 100:
+        scale += blocks[half_simbol]
+    for i in range(numsimb-full_simbols-1):
+        if i == 0 and full_simbols == 0 and half_simbol == 0:
+            scale = "<s>▏⠀"
+            continue
+        scale += blocks[0]
+
+    if prefix:
+        scale = prefix +scale
+
+    scale += "</s>▏"
+    if len(value) > 0:
+        k_letter = 180/267
+        k_point = 112/267
+        k_space = 104/267
+        text = str(value) +" "+ si
+        start_pos = ((len(scale))
+                    -(((len(text)-text.count('.')+text.count(' '))*k_letter)
+                    +text.count('.')*k_point+text.count(' ')*k_space))/2
+        for i in range(int(round(start_pos))):
+            output_text += "⠀"
+        output_text += text + "\n"
+    if add_percent:
+        scale += " "+str(round(percent_value))+'%'
+
+    output_text += scale
+    return(output_text)
 
 
 async def update_message(update, context, text, keyboard):
@@ -395,10 +417,6 @@ async def auth(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
             logger.info("User " + str(user.first_name) + " " + str(user.last_name) + ": " + str(
                 user.id) + " successfully logged in")
-            if "users" in context.bot_data:
-                context.bot_data["users"].append(context.user_data["user"])
-            else:
-                context.bot_data["users"] = [context.user_data["user"], ]
 
             await root(update, context)
             return ROOT
@@ -430,35 +448,118 @@ async def auth(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def root(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    text = "Welcome to NoSSD bot"
-    await update_message(update, context, text, standart_keyboard)
+    if "NODES" in CONFIG and CONFIG["NODES"]:
+        reply_keyboard = [[]]
+        input_field_placeholder = ""
+        text = "Welcome to NoSSD bot"
+        for index, ip in enumerate(CONFIG["NODES"]):
+            reply_keyboard[0].append(f"{index + 1}")
+            input_field_placeholder += f"{index + 1}:{ip[-3:]}; "
+        input_field_placeholder = input_field_placeholder[:-2]
+        reply_markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True,
+                                           input_field_placeholder=input_field_placeholder[:64])
+
+        if update.message:
+            context.chat_data["last_message"] = await update.message.reply_text(text, reply_markup=reply_markup)
+            await miner_status(update, context)
+
+    else:
+        await miner_status(update, context)
+
+    if update.callback_query:
+        if update.callback_query.data == "miner_status" or update.callback_query.data == "root":
+            await miner_status(update, context)
+
+        elif update.callback_query.data == "sys_info":
+            await sys_info(update, context)
+        elif update.callback_query.data == "farm_status":
+            await farm_status(update, context)
+        else:
+            pass  # put new functions
+
+    if "farm" not in context.user_data:
+        context.user_data["farm"] = "1"
     return ROOT
 
 
 async def miner_status(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=False):
-    if not context.user_data or "farm" not in context.user_data or int(context.user_data["farm"]) == 1:
-        stat = ["STOP", "START", "RUNNING", "RESTART", "IDLE", "STOPPING", "KILL"]
-        text = f"NODE 1\n\n"
-        text += "Miner state: " + stat[RUN_STATE] + "\n"
+    if not context.user_data or "farm" not in context.user_data or context.user_data["farm"] == "1":
+        stat = ["STOP", "START", "MINING ⛏", "RESTART", "IDLE 💤", "STOPPING ⏱", "KILL"]
+        text = "Miner state: " + stat[RUN_STATE] + "\n\n"
+        text += f"Worker: {INFO_DICT['worker']}\n"
+        text += f"Mineable plots: {INFO_DICT['mineable_plots']}"
+        text += f'''\n{num_to_scale(percent_value=(INFO_DICT['shares1'] / INFO_DICT['max_shares1'] * 100),
+                                  add_percent=False,
+                                  prefix="Shares 1h   ",
+                                  value=str(INFO_DICT['shares1']))}\n'''
+        text += f'''{num_to_scale(percent_value=(INFO_DICT['shares24'] / INFO_DICT['max_shares24'] * 100),
+                                  add_percent=False,
+                                  prefix="Shares 24h ",
+                                  value=str(INFO_DICT['shares24']))}\n\n'''
         if NoSSD_work_queue.empty():
-            text += "\nNo new messages in the log"
+            text += "No new messages in the log"
         else:
-            text += "\nLast messages:"
+            text += "Last messages:"
             while not NoSSD_work_queue.empty():
                 text += "\n" + await NoSSD_work_queue.get()
-        if slave: return text
+        if slave:
+            return text
+        else:
+            text = f"NODE 1\n\n" + text
 
     else:
         text = f"NODE {context.user_data['farm']}\n\n"
-        text += tcp_client(CONFIG["NODES"][int(context.user_data["farm"])], 2605, {"code": 200, "data": "miner_status"},
-                           True)
+        text += await tcp_client(CONFIG["NODES"][int(context.user_data["farm"]) - 1], 2605,
+                                 {"code": 200, "data": "miner_status"},
+                                 True)
+    await update_message(update, context, text, standart_keyboard)
+    return ROOT
+
+
+async def farm_status(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=False):
+    stat = ["STOP", "START", "MINING ⛏", "RESTART", "IDLE 💤", "STOPPING ⏱", "KILL"]
+    status = stat[RUN_STATE]
+    if not slave:
+        text = f"Node 1 status: {stat[RUN_STATE]}\n"
+        text += f"Mineable plots: {INFO_DICT['mineable_plots']}"
+        text += f'''\n{num_to_scale(percent_value=(INFO_DICT['shares1'] / INFO_DICT['max_shares1'] * 100),
+                                  add_percent=False,
+                                  prefix="Shares 1h   ",
+                                  value=str(INFO_DICT['shares1']))}\n'''
+        text += f'''{num_to_scale(percent_value=(INFO_DICT['shares24'] / INFO_DICT['max_shares24'] * 100),
+                                  add_percent=False,
+                                  prefix="Shares 24h ",
+                                  value=str(INFO_DICT['shares24']))}'''
+
+        for i in range(1, len(CONFIG["NODES"])):
+            node = i + 1
+            answer = await tcp_client(host=CONFIG["NODES"][i],
+                                      port=2605,
+                                      message={"code": 200, "data": "farm_status"},
+                                      comand=True)
+            if type(answer) == str:
+                text += f"\n\nNode {node} status: {answer}\n"
+            else:
+                text += f"\n\nNode {node} status: {answer['status']}\n"
+                text += f"Mineable plots: {answer['info']['mineable_plots']}"
+                text += f'''\n{num_to_scale(percent_value=(answer['info']['shares1'] / answer['info']['max_shares1'] * 100),
+                                          add_percent=False,
+                                          prefix="Shares 1h   ",
+                                          value=str(answer['info']['shares1']))}\n'''
+                text += f'''{num_to_scale(percent_value=(answer['info']['shares24'] / answer['info']['max_shares24'] * 100),
+                                          add_percent=False,
+                                          prefix="Shares 24h ",
+                                          value=str(answer['info']['shares24']))}'''
+
+    else:
+        return {"status": status, "info": INFO_DICT}
     await update_message(update, context, text, standart_keyboard)
     return ROOT
 
 
 # get all hdd in system
 def get_disk_list(min_size):
-    disk_part = psutil.disk_partitions(all=False)
+    disk_part = psutil.disk_partitions(all=True)
     disk_list = {}
     for partitions in disk_part:
         if (partitions.device.startswith("/dev/s") or partitions.device.startswith(
@@ -471,7 +572,7 @@ def get_disk_list(min_size):
 
 def disk_info():
     if not "SUDO_PASS" in CONFIG:
-        return "Can't get disk info without sudo\n"
+        CONFIG["SUDO_PASS"] = "0"
 
     disk_list = get_disk_list(10 * 1000000000)
     disk_list_keys = list(disk_list.keys())
@@ -480,9 +581,8 @@ def disk_info():
     prev_disks = {}
     sudo_password = CONFIG["SUDO_PASS"]
     if not disk_list_keys: return "No available disks\n"
-    for key in disk_list_keys:
-        temperature = ""
-        dev = re.findall(r"\D+", key)[0]
+    for dev in disk_list_keys:
+        temperature = "? "
         if not dev in prev_disks:
             p = subprocess.Popen(['sudo', '-S', 'smartctl', '-A', '-j', dev], stdout=subprocess.PIPE,
                                  stdin=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
@@ -491,30 +591,23 @@ def disk_info():
                 data = json.loads(cli)
                 temperature = data["temperature"]["current"]
             except(json.decoder.JSONDecodeError, IndexError, KeyError):
-                return "Can't get disk info\n"
+                temperature = "? "
             prev_disks[dev] = temperature
         else:
             temperature = prev_disks[dev]
 
         attention = " "
-        if temperature and temperature > 50: attention = "❗"
-        text = text + "{0} ({1})({4}℃){7}:\nTotal: {2} GB. Free: {3} GB\nUsed: {5} {6}%".format(key, disk_list[key][4],
-                                                                                                round((disk_list[key][
-                                                                                                           0] / 1000000000),
-                                                                                                      2),
-                                                                                                round((disk_list[key][
-                                                                                                           2] / 1000000000),
-                                                                                                      2), temperature,
-                                                                                                num_to_scale(
-                                                                                                    disk_list[key][3],
-                                                                                                    19),
-                                                                                                disk_list[key][3],
-                                                                                                attention) + "\n"
-        return text
+        if temperature and temperature != "? " and temperature > 50: attention = "🌡"
+        text += f'''<b>    {dev}</b>   {round((disk_list[dev][0] / 1000000000), 2)} / {round((disk_list[dev][2] / 1000000000), 2)} GB
+{num_to_scale(
+            percent_value=disk_list[dev][3],
+            numsimb=20)}
+    {disk_list[dev][4][:20]} ({temperature} ℃{attention})\n'''
+    return text
 
 
 async def sys_info(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=False):
-    if not context.user_data or "farm" not in context.user_data or context.user_data["farm"] == 1:
+    if not context.user_data or "farm" not in context.user_data or context.user_data["farm"] == "1":
         psutil.cpu_percent(percpu=False)
 
         disk_info_result = disk_info()
@@ -536,26 +629,63 @@ async def sys_info(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=Fal
 
         used_CPU = psutil.cpu_percent(percpu=False)
 
-        text = f"NODE 1\n\n"
-        text += "<b>System info:</b>\n"
+        text = "<b>System info:</b>\n"
         text += ("<b>RAM:</b>\nUsed_RAM: {0}%. Used_SWAP: {1} %\n<b>CPU:</b>\nUsed_CPU: {2} %. CPU_freq: {3} "
                  "MHz.\nCPU_Temp: {4} C. FAN: {5} RPM\n<b>HDD/NVME:</b>\n").format(
             used_RAM, used_SWAP, used_CPU, CPU_freq, CPU_temp, FAN)
 
         text += disk_info_result
 
+        #GPU info
+        text += "<b>GPU:</b>\n"
+        try:
+            cli = os.popen('nvidia-smi -q -x').read()
+            gpu_dict = xmltodict.parse(cli)
+            if int(gpu_dict['nvidia_smi_log']['attached_gpus']) > 1:
+                for gpu in gpu_dict['nvidia_smi_log']['gpu']:
+                    text +=f"{gpu['product_name']}\n"
+                    for args in ((f"FAN: {gpu['fan_speed']}", f"Mem used: {gpu['fb_memory_usage']['used']}"),
+                                 (f"GPU util: {gpu['utilization']['gpu_util']}", f"Mem util: {gpu['utilization']['memory_util']}"),
+                                (f"GPU temp: {gpu['temperature']['gpu_temp']}", f"Mem temp: {gpu['temperature']['memory_temp']}"),
+                            (f"Power: {gpu['power_readings']['power_draw']}", f"{gpu['power_readings']['power_limit']}"),
+                            (f"GPU: {gpu['clocks']['graphics_clock']}", f"Mem: {gpu['clocks']['mem_clock']}\n")):
+                        text += '{0:<20} {1:<20}'.format(*args) + "\n"
+            else:
+                gpu = gpu_dict['nvidia_smi_log']['gpu']
+                text += f"{gpu['product_name']}\n"
+                for args in ((f"FAN: {gpu['fan_speed']}", f"Mem used: {gpu['fb_memory_usage']['used']}"),
+                             (f"GPU util: {gpu['utilization']['gpu_util']}", f"Mem util: {gpu['utilization']['memory_util']}"),
+                            (f"GPU temp: {gpu['temperature']['gpu_temp']}", f"Mem temp: {gpu['temperature']['memory_temp']}"),
+                        (f"Power: {gpu['power_readings']['power_draw']}", f"{gpu['power_readings']['power_limit']}"),
+                        (f"GPU: {gpu['clocks']['graphics_clock']}", f"Mem: {gpu['clocks']['mem_clock']}\n")):
+                    text += '{0:<20} {1:<20}'.format(*args) + "\n"
+        except Exception as e:
+            logging.error(f" No GPU info {e}")
+            text += "No GPU info\n"
+
         text += "System start at: {0}".format(Sys_start_at) + "\n"
-        if slave: return text
+        if slave:
+            return text
+        else:
+            text = f"NODE 1\n\n" + text
     else:
         text = f"NODE {context.user_data['farm']}\n\n"
-        text += tcp_client(CONFIG["NODE_LIST"][context.user_data["farm"]], 2605, {"code": 200, "data": "sys_info"},
-                           True)
+        text += await tcp_client(CONFIG["NODES"][int(context.user_data["farm"]) - 1], 2605,
+                                 {"code": 200, "data": "sys_info"},
+                                 True)
     await update_message(update, context, text, standart_keyboard)
     return ROOT
 
 
 async def miner_control(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=""):
-    if not context.user_data or "farm" not in context.user_data or context.user_data["farm"] == 1:
+    #refresh config
+    with open(dir_script + "/config.yaml") as f:
+        new_config = yaml.load(f.read(), Loader=yaml.FullLoader)
+        if "NoSSD_PATCH" in new_config: globals()["CONFIG"]["NoSSD_PATCH"] = new_config["NoSSD_PATCH"]
+        if "NoSSD_PARAMS" in new_config: globals()["CONFIG"]["NoSSD_PARAMS"] = new_config["NoSSD_PARAMS"]
+
+
+    if not context.user_data or "farm" not in context.user_data or context.user_data["farm"] == "1":
         if slave == "/run":
             globals()["RUN_STATE"] = START
             text = "Starting miner"
@@ -585,24 +715,28 @@ async def miner_control(update: Update, context: ContextTypes.DEFAULT_TYPE, slav
             if slave: return text
     else:
         text = f"NODE {context.user_data['farm']}\n\n"
-        text += tcp_client(CONFIG["NODE_LIST"][context.user_data["farm"]], 2605, {"code": 200, "data": update.message.text},
-                           True)
+        text += await tcp_client(CONFIG["NODES"][int(context.user_data["farm"]) - 1], 2605,
+                                 {"code": 200, "data": update.message.text},
+                                 True)
 
     await update_message(update, context, text, standart_keyboard)
     return ROOT
 
 
-async def set_farm(update: Update, context: CallbackContext) -> None:
-    if int(update.message.text) > len(CONFIG["NODES"]):
-        context.chat_data["last_message"]  = await update.message.reply_text(
+async def set_farm(update: Update, context: CallbackContext):
+    if not "NODES" in CONFIG or int(update.message.text) > len(CONFIG["NODES"]):
+        context.chat_data["last_message"] = await update.message.reply_text(
             "Error node number", reply_markup=InlineKeyboardMarkup(standart_keyboard), parse_mode="HTML"
         )
-        return
+        return ROOT
+
     context.user_data["farm"] = update.message.text
     if int(update.message.text) == 1:
         await miner_status(update=update, context=context, slave=False)
     else:
-        text = await tcp_client(CONFIG["NODES"][int(update.message.text) - 1], 2605, "miner_status", True)
+        text = f"NODE {context.user_data['farm']}\n\n"
+        text += await tcp_client(CONFIG["NODES"][int(update.message.text) - 1], 2605,
+                                {"code": 200, "data": "miner_status"}, True)
         context.chat_data["last_message"] = await update.message.reply_text(
             text, reply_markup=InlineKeyboardMarkup(standart_keyboard), parse_mode="HTML"
         )
@@ -613,14 +747,42 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.message.from_user
     logger.info("User %s canceled the conversation.", user.first_name)
     await update.message.reply_text(
-        "Bye! I hope we can talk again some day.", reply_markup=ReplyKeyboardRemove()
+        "Bye!", reply_markup=ReplyKeyboardRemove()
     )
 
     return ConversationHandler.END
 
 
 async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    print("no settings yet")
+    if update.message:
+        u = update.message.from_user
+    else:
+        u = update.callback_query.from_user
+    notify = context.user_data["user"].notify
+    text = f"{u.first_name} {u.last_name} ({u.id}) ⚙\n\n"
+    if notify == "True": notify = "Yes"
+    if notify == "False": notify = "NO"
+    text += f"Sound notifications: {notify}"
+
+    keyboard = [[]]
+    if notify == "Yes":
+        keyboard[0].append(InlineKeyboardButton("Turn OFF notifications", callback_data="settings_notify_off"))
+    else:
+        keyboard[0].append(InlineKeyboardButton("Turn ON notifications", callback_data="settings_notify_on"))
+
+    keyboard[0].append(InlineKeyboardButton("🏠", callback_data="root"))
+    await update_message(update, context, text, keyboard)
+    return SETTINGS
+
+
+async def set_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    u = update.callback_query.from_user
+    if update.callback_query.data == "settings_notify_on":
+        context.user_data["user"].notify = "True"
+    else:
+        context.user_data["user"].notify = "False"
+    context.user_data["user"].save_to_db("notify")
+    await settings(update, context)
     return SETTINGS
 
 
@@ -676,10 +838,8 @@ async def logout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def send_message_all(context: CallbackContext, text):
-    if "users" not in context.bot_data:
-        users = Users()
-        context.bot_data["users"] = users
-    for user in context.bot_data["users"]:
+    users = Users()
+    for user in users.users:
         await context.bot.send_message(
             chat_id=user.id, text=text, reply_markup=InlineKeyboardMarkup(standart_keyboard), parse_mode="HTML",
             disable_notification=not eval(user.notify)
@@ -693,7 +853,7 @@ async def error_log_handler(context: CallbackContext):
         if not CONFIG["SLAVE_PC"]:
             await send_message_all(context, "NODE 1 \n\n" + text)
         else:
-            await tcp_client(CONFIG["NODES"][0], 2605, text, False)
+            await tcp_client(CONFIG["NODES"][0], 2605, {"code": 200, "data": text}, False)
 
 
 def main() -> None:
@@ -704,68 +864,71 @@ def main() -> None:
     jobs = application.job_queue
     jobs.run_once(callback=error_log_handler, when=1)
     # Start tcp server
-    jobs.run_once(callback=start_tcp_server, when=2)
+    if "NODES" in CONFIG:
+        jobs.run_once(callback=start_tcp_server, when=2)
 
-    if not CONFIG["SLAVE_PC"]:
-        # Add conversation handler
-        conv_handler = ConversationHandler(
-            entry_points=[CommandHandler("start", start),
-                          CommandHandler("cancel", start),
-                          CommandHandler("logout", start),
-                          CommandHandler("settings", go_to_settings),
-                          CallbackQueryHandler(start, pattern='^')],
-            states={
-                AUTH: [CommandHandler("start", start),
-                       CommandHandler("settings", go_to_settings),
-                       CommandHandler("cancel", cancel),
-                       MessageHandler(filters.TEXT, auth)],
-                ROOT: [CommandHandler("start", start),
-                       CommandHandler("cancel", cancel),
+    # Add conversation handler
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start),
+                      CommandHandler("cancel", start),
+                      CommandHandler("logout", start),
+                      CommandHandler("settings", go_to_settings),
+                      CallbackQueryHandler(start, pattern='^')],
+        states={
+            AUTH: [CommandHandler("start", start),
+                   CommandHandler("settings", go_to_settings),
+                   CommandHandler("cancel", cancel),
+                   MessageHandler(filters.TEXT, auth)],
+            ROOT: [CommandHandler("start", start),
+                   CommandHandler("cancel", cancel),
+                   CommandHandler("logout", logout),
+                   CommandHandler("settings", go_to_settings),
+                   CommandHandler("run", miner_control),
+                   CommandHandler("stop", miner_control),
+                   CommandHandler("kill", miner_control),
+                   CallbackQueryHandler(miner_status, pattern='^miner_status'),
+                   CallbackQueryHandler(farm_status, pattern='^farm_status'),
+                   CallbackQueryHandler(sys_info, pattern='^sys_info'),
+                   CallbackQueryHandler(root, pattern='^root'),
+                   MessageHandler(filters.Regex('^(\d{,2})$'), set_farm)
+                   ],
+            SETTINGS: [CommandHandler("cancel", cancel),
                        CommandHandler("logout", logout),
-                       CommandHandler("settings", go_to_settings),
-                       CommandHandler("run", miner_control),
-                       CommandHandler("stop", miner_control),
-                       CommandHandler("kill", miner_control),
-                       CallbackQueryHandler(miner_status, pattern='^miner_status'),
-                       CallbackQueryHandler(sys_info, pattern='^sys_info'),
-                       CallbackQueryHandler(root, pattern='^root'),
-                       MessageHandler(filters.Regex('^(\d{,2})$'), set_farm)
-                       ],
-                SETTINGS: [CommandHandler("stop", cancel),
-                           CommandHandler("cancel", cancel),
-                           CommandHandler("logout", logout),
-                           CommandHandler("settings", go_to_settings),
-                           CallbackQueryHandler(root, pattern='^root$'), ],
-                # ConversationHandler.TIMEOUT: [MessageHandler(filters.ALL, timeout),
-                #                               CallbackQueryHandler(timeout, pattern='^'), ],
-            },
-            # conversation_timeout=300,
-            fallbacks=[CommandHandler("cancel", cancel)],
-        )
+                       CallbackQueryHandler(root, pattern='^root$'),
+                       CallbackQueryHandler(set_settings, pattern='^settings_notify_on'),
+                       CallbackQueryHandler(set_settings, pattern='^settings_notify_off')],
+            # ConversationHandler.TIMEOUT: [MessageHandler(filters.ALL, timeout),
+            #                               CallbackQueryHandler(timeout, pattern='^'), ],
+        },
+        # conversation_timeout=300,
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
 
-        application.add_handler(conv_handler)
+    application.add_handler(conv_handler)
 
-        # Run the bot until the user presses Ctrl-C
-        application.run_polling(connect_timeout=10, pool_timeout=10, read_timeout=5, write_timeout=5,
-                                allowed_updates=Update.ALL_TYPES)
+    # Run the bot until the user presses Ctrl-C
+    application.run_polling(connect_timeout=10, pool_timeout=10, read_timeout=5, write_timeout=5,
+                            allowed_updates=Update.ALL_TYPES)
 
 
-
-
-async def main_slave():
+def main_slave():
     application = Application.builder().token(CONFIG["BOT_TOKEN"]).concurrent_updates(10).build()
+    context = CallbackContext(application)
+    loop.run_until_complete(asyncio.gather(error_log_handler(context), start_tcp_server(context)))
 
-    # Add my handler for NoSSd log events
-    jobs = application.job_queue
-    jobs.run_once(callback=error_log_handler, when=1)
-    # Start tcp server
-    jobs.run_once(callback=start_tcp_server, when=2)
-    print("Slave")
-    await application.initialize()
-    await application.start()
 
 # For MINER
 STOP, START, RUNNING, RESTART, IDLE, STOPPING, KILL = range(7)
+
+
+def kill_child_processes(parent_pid, sig=signal.SIGTERM):
+    try:
+        parent = psutil.Process(parent_pid)
+    except psutil.NoSuchProcess:
+        return
+    children = parent.children(recursive=True)
+    for process in children:
+        process.send_signal(sig)
 
 
 def run(command, std_type):
@@ -773,15 +936,24 @@ def run(command, std_type):
         if RUN_STATE == IDLE:
             time.sleep(3)
             if "process" in locals() and process.poll() is None:
-                yield (f"process runing yet {process.pid}")
+                yield (f"Miner runing yet {process.pid}")
                 globals()["RUN_STATE"] = RUNNING
 
         if RUN_STATE == STOPPING:
-            if "process" in locals() and process.poll() is None:
-                time.sleep(2)
+            try:
+                if std_type == "err":
+                    line = process.stderr.readline().rstrip()
+                elif std_type == "out":
+                    line = process.stdout.readline().rstrip()
+                else:
+                    break
+            except(UnicodeDecodeError) as e:
+                logger.error(str(e))
                 continue
-            globals()["RUN_STATE"] = IDLE
-            yield "Miner stopped"
+            if not line and process.poll() != None:
+                globals()["RUN_STATE"] = IDLE
+                yield f"{datetime.datetime.now().strftime('%H:%M:%S')} WARNING: Miner stopped"
+            yield line
 
         if RUN_STATE == START:
             if not "process" in locals() or ("process" in locals() and process.poll() != None):
@@ -794,19 +966,21 @@ def run(command, std_type):
 
         if RUN_STATE == STOP:
             if ("process" in locals() and process.poll() == None):
-                process.send_signal(signal.SIGTERM)
+                kill_child_processes(process.pid, signal.SIGINT)
                 globals()["RUN_STATE"] = STOPPING
                 yield "Stopping miner"
             else:
+                globals()["RUN_STATE"] = IDLE
                 yield "Miner not running now"
 
         if RUN_STATE == KILL:
             if ("process" in locals() and process.poll() == None):
-                process.send_signal(signal.SIGKILL)
+                kill_child_processes(process.pid, signal.SIGKILL)
                 globals()["RUN_STATE"] = STOPPING
                 yield "Killing miner"
                 time.sleep(1)
             else:
+                globals()["RUN_STATE"] = IDLE
                 yield "Miner not running now"
 
         if RUN_STATE == RUNNING:
@@ -816,9 +990,8 @@ def run(command, std_type):
                 elif std_type == "out":
                     line = process.stdout.readline().rstrip()
                 else:
-                    break
+                    continue
             except(UnicodeDecodeError) as e:
-                print(e)
                 continue
             if not line and process.poll() != None:
                 globals()["RUN_STATE"] = IDLE
@@ -826,30 +999,62 @@ def run(command, std_type):
             yield line
 
 
-def create_shortcut():
-    try:
-        from pyshortcuts import make_shortcut
-        patch = get_script_dir()
-        icon = '/usr/share/icons/gnome/48x48/devices/drive-harddisk.png'
-        make_shortcut(script=patch, name='Chia NoSSD',
-                                icon=icon,
-                                terminal=True)
-    except ImportError:
-        print("Can't create desktop shortcut, without package pyshortcuts")
-
 def read_nossd_log(command, std_type):
+    class Shares:
+        def __init__(self):
+            self.shares = []
+            self.shares1 = 0
+            self.shares24 = 0
+
+        def new_share(self):
+            self.shares.append(time.time())
+
+        def check_shares(self):
+            for i in range(len(self.shares)):
+                if time.time() - self.shares[i] > 86400:
+                    self.shares.pop(i)
+                else:
+                    break
+            self.shares24 = len(self.shares)
+            self.shares1 = 0
+            for i in range(len(self.shares) - 1, -1, -1):
+                if time.time() - self.shares[i] > 3600: break
+                self.shares1 += 1
+
+
+    shares = Shares()
     for log in run(command, std_type):
         print(colored(log, 'green'))
         error_log = re.findall(r"(\d{2}:\d{2}:\d{2} ERROR:.+$)", log)
         warning_log = re.findall(r"(\d{2}:\d{2}:\d{2} WARNING:.+$)", log)
+        mineable_plots = re.findall(r"Mineable plots: (\d+)$", log)
+        removed_plot = re.findall(r"(\d{2}:\d{2}:\d{2} Plot.+ has been removed.+)", log)
+        share_gen = re.findall(r"(\d{2}:\d{2}:\d{2} Share generated.+)", log)
+        worker = re.findall(r"^Worker: (.+)$", log)
         if error_log:
-            NoSSD_err_queue.put_nowait(error_log[0])
+            asyncio.run_coroutine_threadsafe(NoSSD_err_queue.put(error_log[0]), loop)
         elif warning_log:
-            NoSSD_err_queue.put_nowait(warning_log[0])
-        else:
-            NoSSD_work_queue.put_nowait(log)
-            while NoSSD_work_queue.qsize() > 5:
-                NoSSD_work_queue.get_nowait()
+            asyncio.run_coroutine_threadsafe(NoSSD_err_queue.put(warning_log[0]), loop)
+        elif mineable_plots:
+            if int(mineable_plots[0]) < INFO_DICT["mineable_plots"]:
+                asyncio.run_coroutine_threadsafe(NoSSD_err_queue.put(
+                    f"Mineable plots: {mineable_plots[0]}. Prev number: {INFO_DICT['mineable_plots']}"), loop)
+            INFO_DICT["mineable_plots"] = int(mineable_plots[0])
+        elif removed_plot:
+            asyncio.run_coroutine_threadsafe(NoSSD_err_queue.put(removed_plot[0]), loop)
+        elif share_gen:
+            shares.new_share()
+            shares.check_shares()
+            INFO_DICT["shares1"] = shares.shares1
+            INFO_DICT["shares24"] = shares.shares24
+            if shares.shares1 > INFO_DICT["max_shares1"]: INFO_DICT["max_shares1"] = shares.shares1
+            if shares.shares24 > INFO_DICT["max_shares24"]: INFO_DICT["max_shares24"] = shares.shares24
+        elif worker:
+            INFO_DICT["worker"] = worker[0]
+
+        asyncio.run_coroutine_threadsafe(NoSSD_work_queue.put(log), loop)
+        while NoSSD_work_queue.qsize() > 7:
+            NoSSD_work_queue.get_nowait()
 
 
 if __name__ == "__main__":
@@ -867,9 +1072,28 @@ if __name__ == "__main__":
     if "SLAVE_PC" not in CONFIG:
         CONFIG["SLAVE_PC"] = False
 
+    if "NODES" in CONFIG:
+        standart_keyboard = [
+            [
+                InlineKeyboardButton("Farm status", callback_data="farm_status"),
+            ],
+            [
+                InlineKeyboardButton("Node status", callback_data="miner_status"),
+                InlineKeyboardButton("System info", callback_data="sys_info"),
+            ],
+        ]
+    else:
+        standart_keyboard = [
+            [
+                InlineKeyboardButton("Farm status", callback_data="miner_status"),
+                InlineKeyboardButton("System info", callback_data="sys_info"),
+            ],
+        ]
+
     # Create async QUEUEs
     NoSSD_err_queue = asyncio.Queue()
     NoSSD_work_queue = asyncio.Queue()
+    loop = asyncio.get_event_loop()
 
     if not CONFIG["SLAVE_PC"]:
         # DB CONNECT
@@ -896,7 +1120,8 @@ if __name__ == "__main__":
         NoSSD_thread = threading.Thread(target=read_nossd_log, args=(command, "out",))
         NoSSD_thread.start()
 
+    INFO_DICT = {"worker": "unknown", "mineable_plots": 0, "shares24": 0, "shares1": 0, "max_shares24": 1, "max_shares1": 1, }
     if CONFIG["SLAVE_PC"]:
-        asyncio.run(main_slave())
+        main_slave()
     else:
         main()
