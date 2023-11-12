@@ -2,9 +2,7 @@
 
 Control and monitoring for NoSSD Chia pool client.
 
-<img src="screenshots/1.png" width="640">
-
-<img src="screenshots/2.png" width="640">
+<img src="screenshots/1.gif" width="300">
 
 
 **Supported OS**
