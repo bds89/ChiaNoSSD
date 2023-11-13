@@ -60,6 +60,7 @@ nvidia-smi
 <details>
   <summary>0.9</summary>
 
+    Please delete your users.db file after update
   - add `/log` command. Bot saves in memory last 100 messages from miner
   - add turn of warnings messages and/or errors messages in the settings
   - bug fixes
