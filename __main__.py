@@ -12,6 +12,8 @@ import subprocess
 import sys
 import threading
 import time
+import queue
+
 import yaml
 import xmltodict
 
@@ -40,38 +42,42 @@ logger = logging.getLogger(__name__)
 
 
 class User:
-    def __init__(self, id, name="?", surname="?", auth="GUEST", tryn=0, notify="True"):
+    def __init__(self, id, name="?", surname="?", auth="GUEST", tryn=0, notify="True", warnings="True", errors="True"):
         self.id = id
         self.name = name
         self.surname = surname
         self.auth = auth
         self.tryn = tryn
         self.notify = notify
+        self.warnings = warnings
+        self.errors = errors
 
     def save_to_db(self, params=[]):
         sqlite_connection = sqlite3.connect(DB_PATCH)
         cursor = sqlite_connection.cursor()
-        user = (self.id, self.name, self.surname, self.auth, self.tryn, self.notify)
+        user = (self.id, self.name, self.surname, self.auth, self.tryn, self.notify, self.warnings, self.errors)
         if not params:
             try:
                 cursor.execute('''SELECT id FROM users WHERE id = ?''', (self.id,))
                 if not cursor.fetchall():
-                    cursor.execute('''INSERT INTO users VALUES(?,?,?,?,?,?)''', user)
+                    cursor.execute('''INSERT INTO users VALUES(?,?,?,?,?,?,?,?)''', user)
                 else:
                     cursor.execute('''UPDATE users 
                                         SET name = ?,
                                         surname = ?,
                                         auth = ?,
                                         tryn = ? ,
-                                        notify = ?
+                                        notify = ?,
+                                        warnings = ?,
+                                        errors = ?
                                             where id = ?''',
-                                   (self.name, self.surname, self.auth, self.tryn, self.notify, self.id))
+                                   (self.name, self.surname, self.auth, self.tryn, self.notify, self.warnings, self.errors, self.id))
                 sqlite_connection.commit()
                 sqlite_connection.close()
                 return True
             except Exception as e:
                 logger.error("Exception: " + str(e) + " in save to DB users without params")
-                logger.info((self.name, self.surname, self.auth, self.tryn, self.notify, self.id))
+                logger.info((self.name, self.surname, self.auth, self.tryn, self.notify, self.warnings, self.errors, self.id))
                 return False
         else:
             try:
@@ -80,40 +86,52 @@ class User:
                 if not cursor.fetchall(): new_user = True
                 if "name" in params:
                     if new_user:
-                        cursor.execute('''INSERT INTO users VALUES(?,?,?,?,?,?)''', user)
+                        cursor.execute('''INSERT INTO users VALUES(?,?,?,?,?,?,?,?)''', user)
                         new_user = False
                     else:
                         cursor.execute('''UPDATE users SET name = ? where id = ?''', (self.name, self.id))
                 if "surname" in params:
                     if new_user:
-                        cursor.execute('''INSERT INTO users VALUES(?,?,?,?,?,?)''', user)
+                        cursor.execute('''INSERT INTO users VALUES(?,?,?,?,?,?,?,?)''', user)
                         new_user = False
                     else:
                         cursor.execute('''UPDATE users SET surname = ? where id = ?''', (self.surname, self.id))
                 if "auth" in params:
                     if new_user:
-                        cursor.execute('''INSERT INTO users VALUES(?,?,?,?,?,?)''', user)
+                        cursor.execute('''INSERT INTO users VALUES(?,?,?,?,?,?,?,?)''', user)
                         new_user = False
                     else:
                         cursor.execute('''UPDATE users SET auth = ? where id = ?''', (self.auth, self.id))
                 if "tryn" in params:
                     if new_user:
-                        cursor.execute('''INSERT INTO users VALUES(?,?,?,?,?,?)''', user)
+                        cursor.execute('''INSERT INTO users VALUES(?,?,?,?,?,?,?,?)''', user)
                         new_user = False
                     else:
                         cursor.execute('''UPDATE users SET tryn = ? where id = ?''', (self.tryn, self.id))
                 if "notify" in params:
                     if new_user:
-                        cursor.execute('''INSERT INTO users VALUES(?,?,?,?,?,?)''', user)
+                        cursor.execute('''INSERT INTO users VALUES(?,?,?,?,?,?,?,?)''', user)
                         new_user = False
                     else:
                         cursor.execute('''UPDATE users SET notify = ? where id = ?''', (self.notify, self.id))
+                if "warnings" in params:
+                    if new_user:
+                        cursor.execute('''INSERT INTO users VALUES(?,?,?,?,?,?,?,?)''', user)
+                        new_user = False
+                    else:
+                        cursor.execute('''UPDATE users SET warnings = ? where id = ?''', (self.warnings, self.id))
+                if "errors" in params:
+                    if new_user:
+                        cursor.execute('''INSERT INTO users VALUES(?,?,?,?,?,?,?,?)''', user)
+                        new_user = False
+                    else:
+                        cursor.execute('''UPDATE users SET errors = ? where id = ?''', (self.errors, self.id))
                 sqlite_connection.commit()
                 sqlite_connection.close()
                 return True
             except Exception as e:
                 logger.error("Exception: " + str(e) + " in save to DB users with params:")
-                logger.info((self.name, self.surname, self.auth, self.tryn, self.notify, self.id))
+                logger.info((self.name, self.surname, self.auth, self.tryn, self.notify, self.warnings, self.errors, self.id))
                 return False
 
     def load_from_db(self, param=""):
@@ -135,6 +153,8 @@ class User:
                 self.auth = user[3]
                 self.tryn = user[4]
                 self.notify = user[5]
+                self.warnings = user[6]
+                self.errors = user[7]
                 sqlite_connection.close()
                 return True
             else:
@@ -154,6 +174,8 @@ class User:
             if param == "auth": self.auth = user[0]
             if param == "tryn": self.tryn = user[0]
             if param == "notify": self.notify = user[0]
+            if param == "warnings": self.warnings = user[0]
+            if param == "errors": self.errors = user[0]
             sqlite_connection.close()
             return user[0]
         else:
@@ -190,7 +212,7 @@ class Users:
             return
         if all_users:
             for us in all_users:
-                user = User(id=us[0], name=us[1], surname=us[2], auth=us[3], tryn=us[4], notify=us[5])
+                user = User(id=us[0], name=us[1], surname=us[2], auth=us[3], tryn=us[4], notify=us[5], warnings=us[6], errors=us[7])
                 self.users.append(user)
 
 
@@ -278,12 +300,15 @@ async def tcp_client(host, port, message, comand=False) -> any:
 
     fut = reader.read()
     try:
-        data = await asyncio.wait_for(fut, 30)
+        data = await asyncio.wait_for(fut, 20)
     except asyncio.exceptions.TimeoutError:
         logger.error(f"TimeoutError {host}")
         return f"TimeoutError {host}"
 
-    answer = pickle.loads(data)
+    try:
+        answer = pickle.loads(data)
+    except Exception as e:
+        return str(e)
     if comand:
         if answer["code"] == 200:
             return answer["data"]
@@ -351,20 +376,30 @@ def num_to_scale(percent_value, numsimb=15, add_percent=True, prefix="", value="
 
 
 async def update_message(update, context, text, keyboard):
-    if update.message:
-        context.chat_data["last_message"] = await update.message.reply_text(
-            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+    if len(text) > 4096:
+        with open('bot_send.txt', 'w') as f:
+            f.write(text)
+            context.chat_data["last_message"] = await update.message.reply_text(
+            "Very long text for TG message", parse_mode="HTML"
         )
+            context.chat_data["last_message"] = await update.message.reply_document(document=open('bot_send.txt', 'rb'),
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
     else:
-        if update.callback_query.message.text != text or update.callback_query.message.reply_markup != InlineKeyboardMarkup(
-                keyboard):
-            await update.callback_query.answer()
-            context.chat_data["last_message"] = await update.callback_query.edit_message_text(text,
-                                                                                              reply_markup=InlineKeyboardMarkup(
-                                                                                                  keyboard),
-                                                                                              parse_mode="HTML")
+        if update.message:
+            context.chat_data["last_message"] = await update.message.reply_text(
+                text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+            )
         else:
-            await update.callback_query.answer()
+            if update.callback_query.message.text != text or update.callback_query.message.reply_markup != InlineKeyboardMarkup(
+                    keyboard):
+                await update.callback_query.answer()
+                context.chat_data["last_message"] = await update.callback_query.edit_message_text(text,
+                                                                                                  reply_markup=InlineKeyboardMarkup(
+                                                                                                      keyboard),
+                                                                                                  parse_mode="HTML")
+            else:
+                await update.callback_query.answer()
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -456,7 +491,7 @@ async def root(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             reply_keyboard[0].append(f"{index + 1}")
             input_field_placeholder += f"{index + 1}:{ip[-3:]}; "
         input_field_placeholder = input_field_placeholder[:-2]
-        reply_markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True,
+        reply_markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=False, resize_keyboard=True,
                                            input_field_placeholder=input_field_placeholder[:64])
 
         if update.message:
@@ -487,7 +522,8 @@ async def miner_status(update: Update, context: ContextTypes.DEFAULT_TYPE, slave
         stat = ["STOP", "START", "MINING ⛏", "RESTART", "IDLE 💤", "STOPPING ⏱", "KILL"]
         text = "Miner state: " + stat[RUN_STATE] + "\n\n"
         text += f"Worker: {INFO_DICT['worker']}\n"
-        text += f"Mineable plots: {INFO_DICT['mineable_plots']}"
+        text += f"Mineable plots: {INFO_DICT['mineable_plots']}\n"
+        text += f"Last plot time: {INFO_DICT['last_time_plot']}"
         text += f'''\n{num_to_scale(percent_value=(INFO_DICT['shares1'] / INFO_DICT['max_shares1'] * 100),
                                   add_percent=False,
                                   prefix="Shares 1h   ",
@@ -519,6 +555,7 @@ async def miner_status(update: Update, context: ContextTypes.DEFAULT_TYPE, slave
 async def farm_status(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=False):
     stat = ["STOP", "START", "MINING ⛏", "RESTART", "IDLE 💤", "STOPPING ⏱", "KILL"]
     status = stat[RUN_STATE]
+
     if not slave:
         text = f"Node 1 status: {stat[RUN_STATE]}\n"
         text += f"Mineable plots: {INFO_DICT['mineable_plots']}"
@@ -530,6 +567,8 @@ async def farm_status(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=
                                   add_percent=False,
                                   prefix="Shares 24h ",
                                   value=str(INFO_DICT['shares24']))}'''
+
+        summary = {"shares1": INFO_DICT['shares1'], "shares24": INFO_DICT['shares24'], "mineable_plots": INFO_DICT['mineable_plots']}
 
         for i in range(1, len(CONFIG["NODES"])):
             node = i + 1
@@ -551,6 +590,14 @@ async def farm_status(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=
                                           prefix="Shares 24h ",
                                           value=str(answer['info']['shares24']))}'''
 
+                summary["shares1"] += answer['info']['shares1']
+                summary["shares24"] += answer['info']['shares24']
+                summary["mineable_plots"] += answer['info']['mineable_plots']
+
+        text += (f"\n\nTotal:\n"
+                 f"Mineable plots: {summary['mineable_plots']}\n"
+                 f"Shares 1h: {summary['shares1']}\n"
+                 f"Shares 24h: {summary['shares24']}")
     else:
         return {"status": status, "info": INFO_DICT}
     await update_message(update, context, text, standart_keyboard)
@@ -570,7 +617,10 @@ def get_disk_list(min_size):
     return disk_list
 
 
-def disk_info():
+def disk_info(disk_info_queue: queue, context: ContextTypes.DEFAULT_TYPE):
+    if 'disk_info' in context.bot_data and time.time() - context.bot_data['disk_info']['time'] < 30:
+        disk_info_queue.put(context.bot_data['disk_info']['data'])
+        return
     if not "SUDO_PASS" in CONFIG:
         CONFIG["SUDO_PASS"] = "0"
 
@@ -603,14 +653,20 @@ def disk_info():
             percent_value=disk_list[dev][3],
             numsimb=20)}
     {disk_list[dev][4][:20]} ({temperature} ℃{attention})\n'''
-    return text
+
+    context.bot_data['disk_info'] = {}
+    context.bot_data['disk_info']['data'] = text
+    context.bot_data['disk_info']['time'] = time.time()
+    disk_info_queue.put(text)
 
 
 async def sys_info(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=False):
     if not context.user_data or "farm" not in context.user_data or context.user_data["farm"] == "1":
         psutil.cpu_percent(percpu=False)
 
-        disk_info_result = disk_info()
+        disk_info_queue = queue.Queue()
+        disk_info_thread = threading.Thread(target=disk_info, args=[disk_info_queue, context])
+        disk_info_thread.start()
 
         used_RAM = psutil.virtual_memory()[2]
         used_SWAP = psutil.swap_memory()[3]
@@ -631,10 +687,8 @@ async def sys_info(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=Fal
 
         text = "<b>System info:</b>\n"
         text += ("<b>RAM:</b>\nUsed_RAM: {0}%. Used_SWAP: {1} %\n<b>CPU:</b>\nUsed_CPU: {2} %. CPU_freq: {3} "
-                 "MHz.\nCPU_Temp: {4} C. FAN: {5} RPM\n<b>HDD/NVME:</b>\n").format(
+                 "MHz.\nCPU_Temp: {4} C. FAN: {5} RPM\n\n").format(
             used_RAM, used_SWAP, used_CPU, CPU_freq, CPU_temp, FAN)
-
-        text += disk_info_result
 
         #GPU info
         text += "<b>GPU:</b>\n"
@@ -662,6 +716,15 @@ async def sys_info(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=Fal
         except Exception as e:
             logging.error(f" No GPU info {e}")
             text += "No GPU info\n"
+
+        text += "\n<b>HDD/NVME</b>\n"
+
+        disk_info_thread.join(10)
+        if not disk_info_thread.is_alive():
+            try:
+                text += disk_info_queue.get_nowait()
+            except:
+                text += "Error get disk info\n"
 
         text += "System start at: {0}".format(Sys_start_at) + "\n"
         if slave:
@@ -723,6 +786,17 @@ async def miner_control(update: Update, context: ContextTypes.DEFAULT_TYPE, slav
     return ROOT
 
 
+async def get_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = ''
+    if 'log' in context.bot_data:
+        for line in context.bot_data['log']:
+            text += f'{line}\n'
+    else: text = "Log is empty now"
+
+    await update_message(update, context, text, standart_keyboard)
+    return ROOT
+
+
 async def set_farm(update: Update, context: CallbackContext):
     if not "NODES" in CONFIG or int(update.message.text) > len(CONFIG["NODES"]):
         context.chat_data["last_message"] = await update.message.reply_text(
@@ -758,30 +832,54 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         u = update.message.from_user
     else:
         u = update.callback_query.from_user
-    notify = context.user_data["user"].notify
     text = f"{u.first_name} {u.last_name} ({u.id}) ⚙\n\n"
-    if notify == "True": notify = "Yes"
-    if notify == "False": notify = "NO"
-    text += f"Sound notifications: {notify}"
 
-    keyboard = [[]]
-    if notify == "Yes":
-        keyboard[0].append(InlineKeyboardButton("Turn OFF notifications", callback_data="settings_notify_off"))
-    else:
-        keyboard[0].append(InlineKeyboardButton("Turn ON notifications", callback_data="settings_notify_on"))
+    notify = context.user_data["user"].notify
+    if notify == "True": notify = "ON"
+    if notify == "False": notify = "OFF"
+    text += f"Sound notifications: {notify}\n"
 
-    keyboard[0].append(InlineKeyboardButton("🏠", callback_data="root"))
+    warnings = context.user_data["user"].warnings
+    if warnings == "True": warnings = "ON"
+    if warnings == "False": warnings = "OFF"
+    text += f"Send warnings: {warnings}\n"
+
+    errors = context.user_data["user"].errors
+    if errors == "True": errors = "ON"
+    if errors == "False": errors = "OFF"
+    text += f"Send errors: {errors}"
+
+    keyboard = [
+            [
+                InlineKeyboardButton(f"Warnings", callback_data=f"settings_warnings"),
+                InlineKeyboardButton(f"Errors", callback_data=f"settings_errors")
+            ],
+            [
+                InlineKeyboardButton(f"Sound", callback_data=f"settings_notify"),
+                InlineKeyboardButton("🏠", callback_data="root"),
+            ],
+        ]
     await update_message(update, context, text, keyboard)
     return SETTINGS
 
 
 async def set_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     u = update.callback_query.from_user
-    if update.callback_query.data == "settings_notify_on":
-        context.user_data["user"].notify = "True"
+    if update.callback_query.data == "settings_notify":
+        if context.user_data["user"].notify == "True": context.user_data["user"].notify = "False"
+        else: context.user_data["user"].notify = "True"
+        context.user_data["user"].save_to_db("notify")
+    elif update.callback_query.data == "settings_warnings":
+        if context.user_data["user"].warnings == "True": context.user_data["user"].warnings = "False"
+        else: context.user_data["user"].warnings = "True"
+        context.user_data["user"].save_to_db("warnings")
+    elif update.callback_query.data == "settings_errors":
+        if context.user_data["user"].errors == "True": context.user_data["user"].errors = "False"
+        else: context.user_data["user"].errors = "True"
+        context.user_data["user"].save_to_db("errors")
     else:
-        context.user_data["user"].notify = "False"
-    context.user_data["user"].save_to_db("notify")
+        pass
+
     await settings(update, context)
     return SETTINGS
 
@@ -839,11 +937,23 @@ async def logout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def send_message_all(context: CallbackContext, text):
     users = Users()
+    if "WARNING" in text: type = "w"
+    elif "ERROR" in text: type = "e"
+    else: type = "o"
     for user in users.users:
+        if type == "w" and not eval(user.warnings): continue
+        if type == "e" and not eval(user.errors): continue
         await context.bot.send_message(
             chat_id=user.id, text=text, reply_markup=InlineKeyboardMarkup(standart_keyboard), parse_mode="HTML",
             disable_notification=not eval(user.notify)
         )
+    #save log
+    if 'log' not in context.bot_data:
+        context.bot_data['log'] = []
+    context.bot_data['log'].append(text)
+    if len(context.bot_data['log']) > 100:
+        context.bot_data['log'].pop(0)
+
 
 
 async def error_log_handler(context: CallbackContext):
@@ -886,6 +996,7 @@ def main() -> None:
                    CommandHandler("run", miner_control),
                    CommandHandler("stop", miner_control),
                    CommandHandler("kill", miner_control),
+                   CommandHandler("log", get_log),
                    CallbackQueryHandler(miner_status, pattern='^miner_status'),
                    CallbackQueryHandler(farm_status, pattern='^farm_status'),
                    CallbackQueryHandler(sys_info, pattern='^sys_info'),
@@ -894,9 +1005,11 @@ def main() -> None:
                    ],
             SETTINGS: [CommandHandler("cancel", cancel),
                        CommandHandler("logout", logout),
+                       CommandHandler("settings", go_to_settings),
                        CallbackQueryHandler(root, pattern='^root$'),
-                       CallbackQueryHandler(set_settings, pattern='^settings_notify_on'),
-                       CallbackQueryHandler(set_settings, pattern='^settings_notify_off')],
+                       CallbackQueryHandler(set_settings, pattern='^settings_notify'),
+                       CallbackQueryHandler(set_settings, pattern='^settings_warnings'),
+                       CallbackQueryHandler(set_settings, pattern='^settings_errors')],
             # ConversationHandler.TIMEOUT: [MessageHandler(filters.ALL, timeout),
             #                               CallbackQueryHandler(timeout, pattern='^'), ],
         },
@@ -1031,6 +1144,9 @@ def read_nossd_log(command, std_type):
         removed_plot = re.findall(r"(\d{2}:\d{2}:\d{2} Plot.+ has been removed.+)", log)
         share_gen = re.findall(r"(\d{2}:\d{2}:\d{2} Share generated.+)", log)
         worker = re.findall(r"^Worker: (.+)$", log)
+        last_time_plot = re.findall(r"\d{2}:\d{2}:\d{2} Plotting, 99%, (.+) elapsed, [012345]s remaining$", log)
+        plot_done = re.findall(r"\d{2}:\d{2}:\d{2} Plot done (.+)$", log)
+
         if error_log:
             asyncio.run_coroutine_threadsafe(NoSSD_err_queue.put(error_log[0]), loop)
         elif warning_log:
@@ -1051,6 +1167,11 @@ def read_nossd_log(command, std_type):
             if shares.shares24 > INFO_DICT["max_shares24"]: INFO_DICT["max_shares24"] = shares.shares24
         elif worker:
             INFO_DICT["worker"] = worker[0]
+        elif last_time_plot:
+            INFO_DICT["last_time_plot"] = last_time_plot[0]
+        elif plot_done:
+            INFO_DICT["mineable_plots"] += 1
+        else: pass
 
         asyncio.run_coroutine_threadsafe(NoSSD_work_queue.put(log), loop)
         while NoSSD_work_queue.qsize() > 7:
@@ -1101,9 +1222,8 @@ if __name__ == "__main__":
         sqlite_connection = sqlite3.connect(DB_PATCH)
         cursor = sqlite_connection.cursor()
         try:
-            cursor.execute("""CREATE TABLE if not exists users
-                            (id integer NOT NULL UNIQUE, name text, surname text, auth text, tryn integer, notify text)
-                        """)
+            cursor.execute("""CREATE TABLE if not exists users (id integer NOT NULL UNIQUE, name text, surname text, 
+            auth text, tryn integer, notify text, warnings text, errors text)""")
             sqlite_connection.commit()
         except Exception as e:
             logger.error("Exception: %s at DB connect.", e)
@@ -1120,7 +1240,7 @@ if __name__ == "__main__":
         NoSSD_thread = threading.Thread(target=read_nossd_log, args=(command, "out",))
         NoSSD_thread.start()
 
-    INFO_DICT = {"worker": "unknown", "mineable_plots": 0, "shares24": 0, "shares1": 0, "max_shares24": 1, "max_shares1": 1, }
+    INFO_DICT = {"worker": "unknown", "mineable_plots": 0, "shares24": 0, "shares1": 0, "max_shares24": 1, "max_shares1": 1, "last_time_plot": "unknown"}
     if CONFIG["SLAVE_PC"]:
         main_slave()
     else:

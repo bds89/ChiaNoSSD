@@ -29,6 +29,7 @@ Control and monitoring for NoSSD Chia pool client.
 - `/run` - run NoSSD client
 - `/stop` - stop NoSSD client by sending ctrl+c (current plot will be completed)
 - `/kill` - kill NoSSD client process immediately
+- `/log` - send last 100 messages from miner
 
 2. Config variables:
 - `BOT_TOKEN` - Your telegram token, from https://t.me/BotFather
@@ -55,3 +56,11 @@ sudo apt-get install smartmontools
 ```bash
 nvidia-smi
 ```
+**Changes**
+<details>
+  <summary>0.9</summary>
+
+  - add `/log` command. Bot saves in memory last 100 messages from miner
+  - add turn of warnings messages and/or errors messages in the settings
+  - bug fixes
+</details>
