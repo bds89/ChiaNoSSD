@@ -288,7 +288,7 @@ async def start_tcp_server(context: CallbackContext = None):
         await server.serve_forever()
 
 
-async def tcp_client(host, port, message, comand=False) -> any:
+async def tcp_client(host, port, message, comand=False, timeout=20) -> any:
     try:
         reader, writer = await asyncio.open_connection(
             host, port)
@@ -300,7 +300,7 @@ async def tcp_client(host, port, message, comand=False) -> any:
 
     fut = reader.read()
     try:
-        data = await asyncio.wait_for(fut, 20)
+        data = await asyncio.wait_for(fut, timeout)
     except asyncio.exceptions.TimeoutError:
         logger.error(f"TimeoutError {host}")
         return f"TimeoutError {host}"
@@ -377,14 +377,16 @@ def num_to_scale(percent_value, numsimb=15, add_percent=True, prefix="", value="
 
 async def update_message(update, context, text, keyboard):
     if len(text) > 4096:
-        with open('bot_send.txt', 'w') as f:
+        with open(dir_script + '/bot_send.txt', 'w') as f:
             f.write(text)
             context.chat_data["last_message"] = await update.message.reply_text(
             "Very long text for TG message", parse_mode="HTML"
         )
-            context.chat_data["last_message"] = await update.message.reply_document(document=open('bot_send.txt', 'rb'),
+            context.chat_data["last_message"] = await update.message.reply_document(document=open(dir_script + '/bot_send.txt', 'rb'),
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
+            if os.path.exists(dir_script + '/bot_send.txt'):
+                os.remove(dir_script + '/bot_send.txt')
     else:
         if update.message:
             context.chat_data["last_message"] = await update.message.reply_text(
@@ -575,7 +577,8 @@ async def farm_status(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=
             answer = await tcp_client(host=CONFIG["NODES"][i],
                                       port=2605,
                                       message={"code": 200, "data": "farm_status"},
-                                      comand=True)
+                                      comand=True,
+                                      timeout=3)
             if type(answer) == str:
                 text += f"\n\nNode {node} status: {answer}\n"
             else:
@@ -661,82 +664,88 @@ def disk_info(disk_info_queue: queue, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def sys_info(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=False):
-    if not context.user_data or "farm" not in context.user_data or context.user_data["farm"] == "1":
-        psutil.cpu_percent(percpu=False)
+    for i in range(6):
+        if not context.user_data or "farm" not in context.user_data or context.user_data["farm"] == "1":
+            psutil.cpu_percent(percpu=False)
 
-        disk_info_queue = queue.Queue()
-        disk_info_thread = threading.Thread(target=disk_info, args=[disk_info_queue, context])
-        disk_info_thread.start()
+            disk_info_queue = queue.Queue()
+            disk_info_thread = threading.Thread(target=disk_info, args=[disk_info_queue, context])
+            disk_info_thread.start()
 
-        used_RAM = psutil.virtual_memory()[2]
-        used_SWAP = psutil.swap_memory()[3]
+            used_RAM = psutil.virtual_memory()[2]
+            used_SWAP = psutil.swap_memory()[3]
 
-        CPU_freq = round(psutil.cpu_freq(percpu=False)[0])
-        CPU_temp = psutil.sensors_temperatures(fahrenheit=False)["coretemp"][0][1]
+            CPU_freq = round(psutil.cpu_freq(percpu=False)[0])
+            CPU_temp = psutil.sensors_temperatures(fahrenheit=False)["coretemp"][0][1]
 
-        fan_list = psutil.sensors_fans()
-        FAN = "no fan"
-        for key, value in fan_list.items():
-            for i in value:
-                if i[1] > 0:
-                    FAN = i[1]
+            fan_list = psutil.sensors_fans()
+            FAN = "no fan"
+            for key, value in fan_list.items():
+                for i in value:
+                    if i[1] > 0:
+                        FAN = i[1]
 
-        Sys_start_at = datetime.datetime.fromtimestamp(psutil.boot_time()).strftime("%Y-%m-%d %H:%M:%S")
+            used_CPU = psutil.cpu_percent(percpu=False)
 
-        used_CPU = psutil.cpu_percent(percpu=False)
+            text = "<b>System info:</b>\n"
+            text += ("<b>RAM:</b>\nUsed_RAM: {0}%. Used_SWAP: {1} %\n<b>CPU:</b>\nUsed_CPU: {2} %. CPU_freq: {3} "
+                     "MHz.\nCPU_Temp: {4} C. FAN: {5} RPM\n\n").format(
+                used_RAM, used_SWAP, used_CPU, CPU_freq, CPU_temp, FAN)
 
-        text = "<b>System info:</b>\n"
-        text += ("<b>RAM:</b>\nUsed_RAM: {0}%. Used_SWAP: {1} %\n<b>CPU:</b>\nUsed_CPU: {2} %. CPU_freq: {3} "
-                 "MHz.\nCPU_Temp: {4} C. FAN: {5} RPM\n\n").format(
-            used_RAM, used_SWAP, used_CPU, CPU_freq, CPU_temp, FAN)
-
-        #GPU info
-        text += "<b>GPU:</b>\n"
-        try:
-            cli = os.popen('nvidia-smi -q -x').read()
-            gpu_dict = xmltodict.parse(cli)
-            if int(gpu_dict['nvidia_smi_log']['attached_gpus']) > 1:
-                for gpu in gpu_dict['nvidia_smi_log']['gpu']:
-                    text +=f"{gpu['product_name']}\n"
+            #GPU info
+            text += "<b>GPU:</b>\n"
+            try:
+                cli = os.popen('nvidia-smi -q -x').read()
+                gpu_dict = xmltodict.parse(cli)
+                if int(gpu_dict['nvidia_smi_log']['attached_gpus']) > 1:
+                    for gpu in gpu_dict['nvidia_smi_log']['gpu']:
+                        text +=f"{gpu['product_name']}\n"
+                        for args in ((f"FAN: {gpu['fan_speed']}", f"Mem used: {gpu['fb_memory_usage']['used']}"),
+                                     (f"GPU util: {gpu['utilization']['gpu_util']}", f"Mem util: {gpu['utilization']['memory_util']}"),
+                                    (f"GPU temp: {gpu['temperature']['gpu_temp']}", f"Mem temp: {gpu['temperature']['memory_temp']}"),
+                                (f"Power: {gpu['power_readings']['power_draw']}", f"{gpu['power_readings']['power_limit']}"),
+                                (f"GPU: {gpu['clocks']['graphics_clock']}", f"Mem: {gpu['clocks']['mem_clock']}\n")):
+                            text += '{0:<20} {1:<20}'.format(*args) + "\n"
+                else:
+                    gpu = gpu_dict['nvidia_smi_log']['gpu']
+                    text += f"{gpu['product_name']}\n"
                     for args in ((f"FAN: {gpu['fan_speed']}", f"Mem used: {gpu['fb_memory_usage']['used']}"),
                                  (f"GPU util: {gpu['utilization']['gpu_util']}", f"Mem util: {gpu['utilization']['memory_util']}"),
                                 (f"GPU temp: {gpu['temperature']['gpu_temp']}", f"Mem temp: {gpu['temperature']['memory_temp']}"),
                             (f"Power: {gpu['power_readings']['power_draw']}", f"{gpu['power_readings']['power_limit']}"),
                             (f"GPU: {gpu['clocks']['graphics_clock']}", f"Mem: {gpu['clocks']['mem_clock']}\n")):
                         text += '{0:<20} {1:<20}'.format(*args) + "\n"
+            except Exception as e:
+                logging.error(f" No GPU info {e}")
+                text += "No GPU info\n"
+
+
+            text += "\n<b>HDD/NVME</b>\n"
+
+            disk_info_thread.join(10)
+            if not disk_info_thread.is_alive():
+                try:
+                    text += disk_info_queue.get_nowait()
+                except:
+                    text += "Error get disk info\n"
+
+            Sys_start_at = datetime.datetime.fromtimestamp(psutil.boot_time()).strftime("%Y-%m-%d %H:%M:%S")
+            text += "System start at: {0}".format(Sys_start_at)
+            if i % 2 == 0 and not slave:
+                text += " ⌛"
+            if slave:
+                return text
             else:
-                gpu = gpu_dict['nvidia_smi_log']['gpu']
-                text += f"{gpu['product_name']}\n"
-                for args in ((f"FAN: {gpu['fan_speed']}", f"Mem used: {gpu['fb_memory_usage']['used']}"),
-                             (f"GPU util: {gpu['utilization']['gpu_util']}", f"Mem util: {gpu['utilization']['memory_util']}"),
-                            (f"GPU temp: {gpu['temperature']['gpu_temp']}", f"Mem temp: {gpu['temperature']['memory_temp']}"),
-                        (f"Power: {gpu['power_readings']['power_draw']}", f"{gpu['power_readings']['power_limit']}"),
-                        (f"GPU: {gpu['clocks']['graphics_clock']}", f"Mem: {gpu['clocks']['mem_clock']}\n")):
-                    text += '{0:<20} {1:<20}'.format(*args) + "\n"
-        except Exception as e:
-            logging.error(f" No GPU info {e}")
-            text += "No GPU info\n"
-
-        text += "\n<b>HDD/NVME</b>\n"
-
-        disk_info_thread.join(10)
-        if not disk_info_thread.is_alive():
-            try:
-                text += disk_info_queue.get_nowait()
-            except:
-                text += "Error get disk info\n"
-
-        text += "System start at: {0}".format(Sys_start_at) + "\n"
-        if slave:
-            return text
+                text = f"NODE 1\n\n" + text
         else:
-            text = f"NODE 1\n\n" + text
-    else:
-        text = f"NODE {context.user_data['farm']}\n\n"
-        text += await tcp_client(CONFIG["NODES"][int(context.user_data["farm"]) - 1], 2605,
-                                 {"code": 200, "data": "sys_info"},
-                                 True)
-    await update_message(update, context, text, standart_keyboard)
+            text = f"NODE {context.user_data['farm']}\n\n"
+            text += await tcp_client(CONFIG["NODES"][int(context.user_data["farm"]) - 1], 2605,
+                                     {"code": 200, "data": "sys_info"},
+                                     True)
+            if i % 2 == 0:
+                text += " ⌛"
+        await update_message(update, context, text, standart_keyboard)
+        await asyncio.sleep(1)
     return ROOT
 
 
@@ -1003,10 +1012,15 @@ def main() -> None:
                    CallbackQueryHandler(root, pattern='^root'),
                    MessageHandler(filters.Regex('^(\d{,2})$'), set_farm)
                    ],
-            SETTINGS: [CommandHandler("cancel", cancel),
+            SETTINGS: [CommandHandler("start", start),
+                       CommandHandler("cancel", cancel),
                        CommandHandler("logout", logout),
                        CommandHandler("settings", go_to_settings),
-                       CallbackQueryHandler(root, pattern='^root$'),
+                       CallbackQueryHandler(miner_status, pattern='^miner_status'),
+                       CallbackQueryHandler(farm_status, pattern='^farm_status'),
+                       CallbackQueryHandler(sys_info, pattern='^sys_info'),
+                       CallbackQueryHandler(root, pattern='^root'),
+                       MessageHandler(filters.Regex('^(\d{,2})$'), set_farm),
                        CallbackQueryHandler(set_settings, pattern='^settings_notify'),
                        CallbackQueryHandler(set_settings, pattern='^settings_warnings'),
                        CallbackQueryHandler(set_settings, pattern='^settings_errors')],
