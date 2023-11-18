@@ -18,7 +18,7 @@ import yaml
 import xmltodict
 
 import psutil
-from telegram import ReplyKeyboardRemove, Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup
+from telegram import ReplyKeyboardRemove, Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, error
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -71,13 +71,15 @@ class User:
                                         warnings = ?,
                                         errors = ?
                                             where id = ?''',
-                                   (self.name, self.surname, self.auth, self.tryn, self.notify, self.warnings, self.errors, self.id))
+                                   (self.name, self.surname, self.auth, self.tryn, self.notify, self.warnings,
+                                    self.errors, self.id))
                 sqlite_connection.commit()
                 sqlite_connection.close()
                 return True
             except Exception as e:
                 logger.error("Exception: " + str(e) + " in save to DB users without params")
-                logger.info((self.name, self.surname, self.auth, self.tryn, self.notify, self.warnings, self.errors, self.id))
+                logger.info(
+                    (self.name, self.surname, self.auth, self.tryn, self.notify, self.warnings, self.errors, self.id))
                 return False
         else:
             try:
@@ -131,7 +133,8 @@ class User:
                 return True
             except Exception as e:
                 logger.error("Exception: " + str(e) + " in save to DB users with params:")
-                logger.info((self.name, self.surname, self.auth, self.tryn, self.notify, self.warnings, self.errors, self.id))
+                logger.info(
+                    (self.name, self.surname, self.auth, self.tryn, self.notify, self.warnings, self.errors, self.id))
                 return False
 
     def load_from_db(self, param=""):
@@ -182,7 +185,9 @@ class User:
             sqlite_connection.close()
             return False
 
-    def delete_from_db(self, id):
+
+    @staticmethod
+    def delete_from_db(id):
         sqlite_connection = sqlite3.connect(DB_PATCH)
         cursor = sqlite_connection.cursor()
 
@@ -212,11 +217,12 @@ class Users:
             return
         if all_users:
             for us in all_users:
-                user = User(id=us[0], name=us[1], surname=us[2], auth=us[3], tryn=us[4], notify=us[5], warnings=us[6], errors=us[7])
+                user = User(id=us[0], name=us[1], surname=us[2], auth=us[3], tryn=us[4], notify=us[5], warnings=us[6],
+                            errors=us[7])
                 self.users.append(user)
 
 
-AUTH, ROOT, SETTINGS, SET_SETTINGS = range(4)
+AUTH, ROOT, SETTINGS, GET_SETTINGS = range(4)
 
 
 async def tcp_server(reader, writer, context):
@@ -248,6 +254,10 @@ async def tcp_server(reader, writer, context):
                 elif recieved_message["data"] == "/kill":
                     send_message = {"code": 200,
                                     "data": await miner_control(update=update, context=context, slave="/kill")}
+                elif type(recieved_message["data"]) is dict:
+                    send_message = {"code": 200,
+                                    "data": await remote_settings(request=recieved_message["data"]["request"],
+                                                                  params=recieved_message["data"]["params"])}
                 else:
                     warning_message = recieved_message["data"]
                     node = CONFIG["NODES"].index(addr[0]) + 1
@@ -335,44 +345,46 @@ def get_script_dir(follow_symlinks=True):
 
 def num_to_scale(percent_value, numsimb=15, add_percent=True, prefix="", value="", si=""):
     output_text = ""
-    if percent_value > 100: percent_value_scale = 100
-    else: percent_value_scale = percent_value
+    if percent_value > 100:
+        percent_value_scale = 100
+    else:
+        percent_value_scale = percent_value
     scale = "<s>"
     blocks = ["⠀", "▏", "▎", "▍", "▌", "▋", "▊", "█"]
-    discretization = numsimb*7
-    simbols = (percent_value_scale/100) * discretization
+    discretization = numsimb * 7
+    simbols = (percent_value_scale / 100) * discretization
     full_simbols = int(simbols // 7)
     half_simbol = int(simbols % 7)
     for i in range(full_simbols):
         scale += blocks[7]
     if percent_value_scale != 100:
         scale += blocks[half_simbol]
-    for i in range(numsimb-full_simbols-1):
+    for i in range(numsimb - full_simbols - 1):
         if i == 0 and full_simbols == 0 and half_simbol == 0:
             scale = "<s>▏⠀"
             continue
         scale += blocks[0]
 
     if prefix:
-        scale = prefix +scale
+        scale = prefix + scale
 
     scale += "</s>▏"
     if len(value) > 0:
-        k_letter = 180/267
-        k_point = 112/267
-        k_space = 104/267
-        text = str(value) +" "+ si
+        k_letter = 180 / 267
+        k_point = 112 / 267
+        k_space = 104 / 267
+        text = str(value) + " " + si
         start_pos = ((len(scale))
-                    -(((len(text)-text.count('.')+text.count(' '))*k_letter)
-                    +text.count('.')*k_point+text.count(' ')*k_space))/2
+                     - (((len(text) - text.count('.') + text.count(' ')) * k_letter)
+                        + text.count('.') * k_point + text.count(' ') * k_space)) / 2
         for i in range(int(round(start_pos))):
             output_text += "⠀"
         output_text += text + "\n"
     if add_percent:
-        scale += " "+str(round(percent_value))+'%'
+        scale += " " + str(round(percent_value)) + '%'
 
     output_text += scale
-    return(output_text)
+    return (output_text)
 
 
 async def update_message(update, context, text, keyboard):
@@ -380,28 +392,32 @@ async def update_message(update, context, text, keyboard):
         with open(dir_script + '/bot_send.txt', 'w') as f:
             f.write(text)
             context.chat_data["last_message"] = await update.message.reply_text(
-            "Very long text for TG message", parse_mode="HTML"
-        )
-            context.chat_data["last_message"] = await update.message.reply_document(document=open(dir_script + '/bot_send.txt', 'rb'),
+                "Very long text for TG message", parse_mode="HTML"
+            )
+            context.chat_data["last_message"] = await update.message.reply_document(
+                document=open(dir_script + '/bot_send.txt', 'rb'),
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
             if os.path.exists(dir_script + '/bot_send.txt'):
                 os.remove(dir_script + '/bot_send.txt')
     else:
-        if update.message:
-            context.chat_data["last_message"] = await update.message.reply_text(
-                text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
-            )
-        else:
-            if update.callback_query.message.text != text or update.callback_query.message.reply_markup != InlineKeyboardMarkup(
-                    keyboard):
-                await update.callback_query.answer()
-                context.chat_data["last_message"] = await update.callback_query.edit_message_text(text,
-                                                                                                  reply_markup=InlineKeyboardMarkup(
-                                                                                                      keyboard),
-                                                                                                  parse_mode="HTML")
+        try:
+            if update.message:
+                context.chat_data["last_message"] = await update.message.reply_text(
+                    text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+                )
             else:
-                await update.callback_query.answer()
+                if update.callback_query.message.text != text or update.callback_query.message.reply_markup != InlineKeyboardMarkup(
+                        keyboard):
+                    await update.callback_query.answer()
+                    context.chat_data["last_message"] = await update.callback_query.edit_message_text(text,
+                                                                                                      reply_markup=InlineKeyboardMarkup(
+                                                                                                          keyboard),
+                                                                                                      parse_mode="HTML")
+                else:
+                    await update.callback_query.answer()
+        except error.BadRequest as e:
+            logger.warning(str(e))
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -445,7 +461,7 @@ async def auth(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             if user_pass == str(CONFIG["PASSWORD"]):
                 context.user_data["user"].auth = "USER"
             if "ADMIN_PASSWORD" in CONFIG and user_pass == str(CONFIG["ADMIN_PASSWORD"]):
-                context.user_data.auth = "ADMIN"
+                context.user_data["user"].auth = "ADMIN"
             context.user_data["user"].name = user.first_name
             context.user_data["user"].surname = user.last_name
             context.user_data["user"].notify = "True"
@@ -527,9 +543,9 @@ async def miner_status(update: Update, context: ContextTypes.DEFAULT_TYPE, slave
         text += f"Mineable plots: {INFO_DICT['mineable_plots']}\n"
         text += f"Last plot time: {INFO_DICT['last_time_plot']}"
         text += f'''\n{num_to_scale(percent_value=(INFO_DICT['shares1'] / INFO_DICT['max_shares1'] * 100),
-                                  add_percent=False,
-                                  prefix="Shares 1h   ",
-                                  value=str(INFO_DICT['shares1']))}\n'''
+                                    add_percent=False,
+                                    prefix="Shares 1h   ",
+                                    value=str(INFO_DICT['shares1']))}\n'''
         text += f'''{num_to_scale(percent_value=(INFO_DICT['shares24'] / INFO_DICT['max_shares24'] * 100),
                                   add_percent=False,
                                   prefix="Shares 24h ",
@@ -562,15 +578,16 @@ async def farm_status(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=
         text = f"Node 1 status: {stat[RUN_STATE]}\n"
         text += f"Mineable plots: {INFO_DICT['mineable_plots']}"
         text += f'''\n{num_to_scale(percent_value=(INFO_DICT['shares1'] / INFO_DICT['max_shares1'] * 100),
-                                  add_percent=False,
-                                  prefix="Shares 1h   ",
-                                  value=str(INFO_DICT['shares1']))}\n'''
+                                    add_percent=False,
+                                    prefix="Shares 1h   ",
+                                    value=str(INFO_DICT['shares1']))}\n'''
         text += f'''{num_to_scale(percent_value=(INFO_DICT['shares24'] / INFO_DICT['max_shares24'] * 100),
                                   add_percent=False,
                                   prefix="Shares 24h ",
                                   value=str(INFO_DICT['shares24']))}'''
 
-        summary = {"shares1": INFO_DICT['shares1'], "shares24": INFO_DICT['shares24'], "mineable_plots": INFO_DICT['mineable_plots']}
+        summary = {"shares1": INFO_DICT['shares1'], "shares24": INFO_DICT['shares24'],
+                   "mineable_plots": INFO_DICT['mineable_plots']}
 
         for i in range(1, len(CONFIG["NODES"])):
             node = i + 1
@@ -585,9 +602,9 @@ async def farm_status(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=
                 text += f"\n\nNode {node} status: {answer['status']}\n"
                 text += f"Mineable plots: {answer['info']['mineable_plots']}"
                 text += f'''\n{num_to_scale(percent_value=(answer['info']['shares1'] / answer['info']['max_shares1'] * 100),
-                                          add_percent=False,
-                                          prefix="Shares 1h   ",
-                                          value=str(answer['info']['shares1']))}\n'''
+                                            add_percent=False,
+                                            prefix="Shares 1h   ",
+                                            value=str(answer['info']['shares1']))}\n'''
                 text += f'''{num_to_scale(percent_value=(answer['info']['shares24'] / answer['info']['max_shares24'] * 100),
                                           add_percent=False,
                                           prefix="Shares 24h ",
@@ -664,7 +681,7 @@ def disk_info(disk_info_queue: queue, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def sys_info(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=False):
-    for i in range(6):
+    for n in range(6):
         if not context.user_data or "farm" not in context.user_data or context.user_data["farm"] == "1":
             psutil.cpu_percent(percpu=False)
 
@@ -692,33 +709,39 @@ async def sys_info(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=Fal
                      "MHz.\nCPU_Temp: {4} C. FAN: {5} RPM\n\n").format(
                 used_RAM, used_SWAP, used_CPU, CPU_freq, CPU_temp, FAN)
 
-            #GPU info
+            # GPU info
             text += "<b>GPU:</b>\n"
             try:
                 cli = os.popen('nvidia-smi -q -x').read()
                 gpu_dict = xmltodict.parse(cli)
                 if int(gpu_dict['nvidia_smi_log']['attached_gpus']) > 1:
                     for gpu in gpu_dict['nvidia_smi_log']['gpu']:
-                        text +=f"{gpu['product_name']}\n"
+                        text += f"{gpu['product_name']}\n"
                         for args in ((f"FAN: {gpu['fan_speed']}", f"Mem used: {gpu['fb_memory_usage']['used']}"),
-                                     (f"GPU util: {gpu['utilization']['gpu_util']}", f"Mem util: {gpu['utilization']['memory_util']}"),
-                                    (f"GPU temp: {gpu['temperature']['gpu_temp']}", f"Mem temp: {gpu['temperature']['memory_temp']}"),
-                                (f"Power: {gpu['power_readings']['power_draw']}", f"{gpu['power_readings']['power_limit']}"),
-                                (f"GPU: {gpu['clocks']['graphics_clock']}", f"Mem: {gpu['clocks']['mem_clock']}\n")):
+                                     (f"GPU util: {gpu['utilization']['gpu_util']}",
+                                      f"Mem util: {gpu['utilization']['memory_util']}"),
+                                     (f"GPU temp: {gpu['temperature']['gpu_temp']}",
+                                      f"Mem temp: {gpu['temperature']['memory_temp']}"),
+                                     (f"Power: {gpu['power_readings']['power_draw']}",
+                                      f"{gpu['power_readings']['power_limit']}"),
+                                     (f"GPU: {gpu['clocks']['graphics_clock']}",
+                                      f"Mem: {gpu['clocks']['mem_clock']}\n")):
                             text += '{0:<20} {1:<20}'.format(*args) + "\n"
                 else:
                     gpu = gpu_dict['nvidia_smi_log']['gpu']
                     text += f"{gpu['product_name']}\n"
                     for args in ((f"FAN: {gpu['fan_speed']}", f"Mem used: {gpu['fb_memory_usage']['used']}"),
-                                 (f"GPU util: {gpu['utilization']['gpu_util']}", f"Mem util: {gpu['utilization']['memory_util']}"),
-                                (f"GPU temp: {gpu['temperature']['gpu_temp']}", f"Mem temp: {gpu['temperature']['memory_temp']}"),
-                            (f"Power: {gpu['power_readings']['power_draw']}", f"{gpu['power_readings']['power_limit']}"),
-                            (f"GPU: {gpu['clocks']['graphics_clock']}", f"Mem: {gpu['clocks']['mem_clock']}\n")):
+                                 (f"GPU util: {gpu['utilization']['gpu_util']}",
+                                  f"Mem util: {gpu['utilization']['memory_util']}"),
+                                 (f"GPU temp: {gpu['temperature']['gpu_temp']}",
+                                  f"Mem temp: {gpu['temperature']['memory_temp']}"),
+                                 (f"Power: {gpu['power_readings']['power_draw']}",
+                                  f"{gpu['power_readings']['power_limit']}"),
+                                 (f"GPU: {gpu['clocks']['graphics_clock']}", f"Mem: {gpu['clocks']['mem_clock']}\n")):
                         text += '{0:<20} {1:<20}'.format(*args) + "\n"
             except Exception as e:
                 logging.error(f" No GPU info {e}")
                 text += "No GPU info\n"
-
 
             text += "\n<b>HDD/NVME</b>\n"
 
@@ -731,7 +754,7 @@ async def sys_info(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=Fal
 
             Sys_start_at = datetime.datetime.fromtimestamp(psutil.boot_time()).strftime("%Y-%m-%d %H:%M:%S")
             text += "System start at: {0}".format(Sys_start_at)
-            if i % 2 == 0 and not slave:
+            if n % 2 == 0 and not slave:
                 text += " ⌛"
             if slave:
                 return text
@@ -742,7 +765,7 @@ async def sys_info(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=Fal
             text += await tcp_client(CONFIG["NODES"][int(context.user_data["farm"]) - 1], 2605,
                                      {"code": 200, "data": "sys_info"},
                                      True)
-            if i % 2 == 0:
+            if n % 2 == 0:
                 text += " ⌛"
         await update_message(update, context, text, standart_keyboard)
         await asyncio.sleep(1)
@@ -750,12 +773,11 @@ async def sys_info(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=Fal
 
 
 async def miner_control(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=""):
-    #refresh config
+    # refresh config
     with open(dir_script + "/config.yaml") as f:
         new_config = yaml.load(f.read(), Loader=yaml.FullLoader)
         if "NoSSD_PATCH" in new_config: globals()["CONFIG"]["NoSSD_PATCH"] = new_config["NoSSD_PATCH"]
         if "NoSSD_PARAMS" in new_config: globals()["CONFIG"]["NoSSD_PARAMS"] = new_config["NoSSD_PARAMS"]
-
 
     if not context.user_data or "farm" not in context.user_data or context.user_data["farm"] == "1":
         if slave == "/run":
@@ -800,7 +822,8 @@ async def get_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'log' in context.bot_data:
         for line in context.bot_data['log']:
             text += f'{line}\n'
-    else: text = "Log is empty now"
+    else:
+        text = "Log is empty now"
 
     await update_message(update, context, text, standart_keyboard)
     return ROOT
@@ -819,7 +842,7 @@ async def set_farm(update: Update, context: CallbackContext):
     else:
         text = f"NODE {context.user_data['farm']}\n\n"
         text += await tcp_client(CONFIG["NODES"][int(update.message.text) - 1], 2605,
-                                {"code": 200, "data": "miner_status"}, True)
+                                 {"code": 200, "data": "miner_status"}, True)
         context.chat_data["last_message"] = await update.message.reply_text(
             text, reply_markup=InlineKeyboardMarkup(standart_keyboard), parse_mode="HTML"
         )
@@ -841,7 +864,7 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         u = update.message.from_user
     else:
         u = update.callback_query.from_user
-    text = f"{u.first_name} {u.last_name} ({u.id}) ⚙\n\n"
+    text = ""
 
     notify = context.user_data["user"].notify
     if notify == "True": notify = "ON"
@@ -859,15 +882,61 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text += f"Send errors: {errors}"
 
     keyboard = [
+        [
+            InlineKeyboardButton(f"Warnings", callback_data=f"settings_warnings"),
+            InlineKeyboardButton(f"Errors", callback_data=f"settings_errors")
+        ],
+        [
+            InlineKeyboardButton(f"Sound", callback_data=f"settings_notify"),
+            InlineKeyboardButton("🏠", callback_data="root"),
+        ],
+    ]
+
+    if context.user_data["user"].auth == "ADMIN":
+        if len(CONFIG["ADMIN_PASSWORD"]) < 3:
+            adm_pass = '*' * len(CONFIG["ADMIN_PASSWORD"])
+        else:
+            adm_pass = f'''{CONFIG["ADMIN_PASSWORD"][0] + ('*' * (len(CONFIG["ADMIN_PASSWORD"]) - 2)) + CONFIG["ADMIN_PASSWORD"][-1]}'''
+
+        if len(CONFIG["PASSWORD"]) < 3:
+            usr_pass = '*' * len(CONFIG["PASSWORD"])
+        else:
+            usr_pass = f'''{CONFIG["PASSWORD"][0] + ('*' * (len(CONFIG["PASSWORD"]) - 2)) + CONFIG["PASSWORD"][-1]}'''
+
+        adm_keyboard = [
             [
-                InlineKeyboardButton(f"Warnings", callback_data=f"settings_warnings"),
-                InlineKeyboardButton(f"Errors", callback_data=f"settings_errors")
+                InlineKeyboardButton(f"User list", callback_data=f"settings_adm_user_list"),
             ],
             [
-                InlineKeyboardButton(f"Sound", callback_data=f"settings_notify"),
-                InlineKeyboardButton("🏠", callback_data="root"),
+                InlineKeyboardButton(f"Adm pass", callback_data=f"settings_adm_adm_pass"),
+                InlineKeyboardButton(f"User pass", callback_data=f"settings_adm_user_pass"),
             ],
+            [
+                InlineKeyboardButton(f"Run at start", callback_data=f"settings_adm_run"),
+                InlineKeyboardButton(f"NoSSD params", callback_data=f"settings_adm_params"),
+            ]
         ]
+
+        if not context.user_data or "farm" not in context.user_data or context.user_data["farm"] == "1":
+            adm_text = (f'Admin password: {adm_pass}\n'
+                        f'User password {usr_pass}\n'
+                        f'Run at startup: {str(CONFIG["RUN_AT_STARTUP"])}\n'
+                        f'NoSSD parameters: {CONFIG["NoSSD_PARAMS"]}\n')
+
+        else:
+            answer = await tcp_client(CONFIG["NODES"][int(context.user_data["farm"]) - 1], 2605,
+                                      {"code": 200, "data": {"request": "GET", "params": {}}},
+                                      True)
+
+            adm_text = (f'Admin password: {adm_pass}\n'
+                        f'User password {usr_pass}\n'
+                        f'Run at startup: {answer["Run at startup"]}\n'
+                        f'NoSSD parameters: {answer["NoSSD parameters"]}\n')
+    else:
+        adm_text = ""
+        adm_keyboard = [[]]
+    text = f"{u.first_name} {u.last_name} ({u.id}) ⚙\n\n" + adm_text + text
+    keyboard = adm_keyboard + keyboard
     await update_message(update, context, text, keyboard)
     return SETTINGS
 
@@ -875,22 +944,138 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def set_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     u = update.callback_query.from_user
     if update.callback_query.data == "settings_notify":
-        if context.user_data["user"].notify == "True": context.user_data["user"].notify = "False"
-        else: context.user_data["user"].notify = "True"
+        if context.user_data["user"].notify == "True":
+            context.user_data["user"].notify = "False"
+        else:
+            context.user_data["user"].notify = "True"
         context.user_data["user"].save_to_db("notify")
     elif update.callback_query.data == "settings_warnings":
-        if context.user_data["user"].warnings == "True": context.user_data["user"].warnings = "False"
-        else: context.user_data["user"].warnings = "True"
+        if context.user_data["user"].warnings == "True":
+            context.user_data["user"].warnings = "False"
+        else:
+            context.user_data["user"].warnings = "True"
         context.user_data["user"].save_to_db("warnings")
     elif update.callback_query.data == "settings_errors":
-        if context.user_data["user"].errors == "True": context.user_data["user"].errors = "False"
-        else: context.user_data["user"].errors = "True"
+        if context.user_data["user"].errors == "True":
+            context.user_data["user"].errors = "False"
+        else:
+            context.user_data["user"].errors = "True"
         context.user_data["user"].save_to_db("errors")
+    elif update.callback_query.data == "settings_adm_run":
+        if not context.user_data or "farm" not in context.user_data or context.user_data["farm"] == "1":
+            CONFIG["RUN_AT_STARTUP"] = not CONFIG["RUN_AT_STARTUP"]
+            with open(dir_script + "/config.yaml", "w") as f:
+                f.write(yaml.dump(CONFIG, sort_keys=False))
+        else:
+            answer = await tcp_client(CONFIG["NODES"][int(context.user_data["farm"]) - 1], 2605,
+                                      {"code": 200, "data": {"request": "POST", "params": {'settings_adm_run': ""}}},
+                                      True)
+            if type(answer) is str:
+                logging.error(answer)
+    elif update.callback_query.data == "settings_adm_adm_pass":
+        await update_message(update, context, "Type new admin password",
+                             [[InlineKeyboardButton("⬅", callback_data="back_to_settings")]])
+        context.chat_data["adm_settings"] = "settings_adm_adm_pass"
+        return GET_SETTINGS
+    elif update.callback_query.data == "settings_adm_user_pass":
+        await update_message(update, context, "Type new user password",
+                             [[InlineKeyboardButton("⬅", callback_data="back_to_settings")]])
+        context.chat_data["adm_settings"] = "settings_adm_user_pass"
+        return GET_SETTINGS
+    elif update.callback_query.data == "settings_adm_params":
+        if not context.user_data or "farm" not in context.user_data or context.user_data["farm"] == "1":
+            text = CONFIG['NoSSD_PARAMS']
+        else:
+            answer = await tcp_client(CONFIG["NODES"][int(context.user_data["farm"]) - 1], 2605,
+                                      {"code": 200, "data": {"request": "GET", "params": {}}},
+                                      True)
+            text = answer["NoSSD parameters"]
+
+        await update_message(update, context, f"{text}\n\nType new parameters for miner",
+                             [[InlineKeyboardButton("⬅", callback_data="back_to_settings")]])
+        context.chat_data["adm_settings"] = "settings_adm_params"
+        return GET_SETTINGS
+    elif update.callback_query.data == "settings_adm_user_list":
+        users = Users()
+        text = ""
+        for user in users.users:
+            text += f'{user.id} {user.name} {user.surname}:\n{user.auth}\n'
+        await update_message(update, context, f"{text}\nType id for delete",
+                             [[InlineKeyboardButton("⬅", callback_data="back_to_settings")]])
+        context.chat_data["adm_settings"] = "settings_adm_user_list"
+        return GET_SETTINGS
     else:
         pass
 
     await settings(update, context)
     return SETTINGS
+
+
+async def set_adm_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if context.chat_data["adm_settings"] == "settings_adm_adm_pass":
+        CONFIG["ADMIN_PASSWORD"] = update.message.text
+        with open(dir_script + "/config.yaml", "w") as f:
+            f.write(yaml.dump(CONFIG, sort_keys=False))
+        users = Users()
+        for user in users.users:
+            if user.auth == "ADMIN":
+                user.auth = "GUEST"
+                user.save_to_db(params=["auth"])
+
+    elif context.chat_data["adm_settings"] == "settings_adm_user_pass":
+        CONFIG["PASSWORD"] = update.message.text
+        with open(dir_script + "/config.yaml", "w") as f:
+            f.write(yaml.dump(CONFIG, sort_keys=False))
+        users = Users()
+        for user in users.users:
+            if user.auth == "USER":
+                user.auth = "GUEST"
+                user.save_to_db(params=["auth"])
+
+    elif context.chat_data["adm_settings"] == "settings_adm_user_list":
+        try:
+            id = int(update.message.text)
+            User.delete_from_db(id)
+        except:
+            pass
+
+
+    elif context.chat_data["adm_settings"] == "settings_adm_params":
+        if not context.user_data or "farm" not in context.user_data or context.user_data["farm"] == "1":
+            CONFIG["NoSSD_PARAMS"] = update.message.text
+            with open(dir_script + "/config.yaml", "w") as f:
+                f.write(yaml.dump(CONFIG, sort_keys=False))
+        else:
+            answer = await tcp_client(CONFIG["NODES"][int(context.user_data["farm"]) - 1], 2605,
+                                      {"code": 200, "data": {"request": "POST",
+                                                             "params": {'settings_adm_params': update.message.text}}},
+                                      True)
+            if type(answer) is str:
+                logging.error(answer)
+    else:
+        pass
+
+    await settings(update, context)
+    return SETTINGS
+
+
+async def remote_settings(request, params):  # only for slave pc
+    if request == "GET":
+        return {'Run at startup': str(CONFIG["RUN_AT_STARTUP"]), 'NoSSD parameters': CONFIG["NoSSD_PARAMS"]}
+    elif request == "POST":
+        if "settings_adm_run" in params:
+            CONFIG["RUN_AT_STARTUP"] = not CONFIG["RUN_AT_STARTUP"]
+            with open(dir_script + "/config.yaml", "w") as f:
+                f.write(yaml.dump(CONFIG, sort_keys=False))
+            return "True"
+        if "settings_adm_params" in params:
+            CONFIG["NoSSD_PARAMS"] = params["settings_adm_params"]
+            with open(dir_script + "/config.yaml", "w") as f:
+                f.write(yaml.dump(CONFIG, sort_keys=False))
+            return "True"
+
+    else:
+        return "unknown request"
 
 
 async def go_to_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -946,23 +1131,29 @@ async def logout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def send_message_all(context: CallbackContext, text):
     users = Users()
-    if "WARNING" in text: type = "w"
-    elif "ERROR" in text: type = "e"
-    else: type = "o"
+    if "WARNING" in text:
+        type = "w"
+    elif "ERROR" in text:
+        type = "e"
+    else:
+        type = "o"
     for user in users.users:
+        if user.auth == "GUEST" or user.auth == "BLACK": continue
         if type == "w" and not eval(user.warnings): continue
         if type == "e" and not eval(user.errors): continue
-        await context.bot.send_message(
-            chat_id=user.id, text=text, reply_markup=InlineKeyboardMarkup(standart_keyboard), parse_mode="HTML",
-            disable_notification=not eval(user.notify)
-        )
-    #save log
+        try:
+            await context.bot.send_message(
+                chat_id=user.id, text=text, reply_markup=InlineKeyboardMarkup(standart_keyboard), parse_mode="HTML",
+                disable_notification=not eval(user.notify)
+            )
+        except error.BadRequest as e:
+            logger.warning(str(e))
+    # save log
     if 'log' not in context.bot_data:
         context.bot_data['log'] = []
     context.bot_data['log'].append(text)
     if len(context.bot_data['log']) > 100:
         context.bot_data['log'].pop(0)
-
 
 
 async def error_log_handler(context: CallbackContext):
@@ -1006,24 +1197,39 @@ def main() -> None:
                    CommandHandler("stop", miner_control),
                    CommandHandler("kill", miner_control),
                    CommandHandler("log", get_log),
-                   CallbackQueryHandler(miner_status, pattern='^miner_status'),
-                   CallbackQueryHandler(farm_status, pattern='^farm_status'),
-                   CallbackQueryHandler(sys_info, pattern='^sys_info'),
-                   CallbackQueryHandler(root, pattern='^root'),
+                   CallbackQueryHandler(miner_status, pattern='miner_status'),
+                   CallbackQueryHandler(farm_status, pattern='farm_status'),
+                   CallbackQueryHandler(sys_info, pattern='sys_info'),
+                   CallbackQueryHandler(root, pattern='root'),
                    MessageHandler(filters.Regex('^(\d{,2})$'), set_farm)
                    ],
             SETTINGS: [CommandHandler("start", start),
                        CommandHandler("cancel", cancel),
                        CommandHandler("logout", logout),
                        CommandHandler("settings", go_to_settings),
-                       CallbackQueryHandler(miner_status, pattern='^miner_status'),
-                       CallbackQueryHandler(farm_status, pattern='^farm_status'),
-                       CallbackQueryHandler(sys_info, pattern='^sys_info'),
-                       CallbackQueryHandler(root, pattern='^root'),
+                       CallbackQueryHandler(miner_status, pattern='miner_status'),
+                       CallbackQueryHandler(farm_status, pattern='farm_status'),
+                       CallbackQueryHandler(sys_info, pattern='sys_info'),
+                       CallbackQueryHandler(root, pattern='root'),
                        MessageHandler(filters.Regex('^(\d{,2})$'), set_farm),
-                       CallbackQueryHandler(set_settings, pattern='^settings_notify'),
-                       CallbackQueryHandler(set_settings, pattern='^settings_warnings'),
-                       CallbackQueryHandler(set_settings, pattern='^settings_errors')],
+                       CallbackQueryHandler(set_settings, pattern='settings_notify'),
+                       CallbackQueryHandler(set_settings, pattern='settings_warnings'),
+                       CallbackQueryHandler(set_settings, pattern='settings_errors'),
+                       CallbackQueryHandler(set_settings, pattern='settings_adm_adm_pass'),
+                       CallbackQueryHandler(set_settings, pattern='settings_adm_user_pass'),
+                       CallbackQueryHandler(set_settings, pattern='settings_adm_run'),
+                       CallbackQueryHandler(set_settings, pattern='settings_adm_params'),
+                       CallbackQueryHandler(set_settings, pattern='settings_adm_user_list')],
+            GET_SETTINGS: [CommandHandler("start", start),
+                           CommandHandler("cancel", cancel),
+                           CommandHandler("logout", logout),
+                           CommandHandler("settings", go_to_settings),
+                           CallbackQueryHandler(miner_status, pattern='miner_status'),
+                           CallbackQueryHandler(farm_status, pattern='farm_status'),
+                           CallbackQueryHandler(sys_info, pattern='sys_info'),
+                           CallbackQueryHandler(root, pattern='root'),
+                           CallbackQueryHandler(go_to_settings, pattern='back_to_settings'),
+                           MessageHandler(filters.ALL, set_adm_settings)],
             # ConversationHandler.TIMEOUT: [MessageHandler(filters.ALL, timeout),
             #                               CallbackQueryHandler(timeout, pattern='^'), ],
         },
@@ -1148,7 +1354,6 @@ def read_nossd_log(command, std_type):
                 if time.time() - self.shares[i] > 3600: break
                 self.shares1 += 1
 
-
     shares = Shares()
     for log in run(command, std_type):
         print(colored(log, 'green'))
@@ -1185,7 +1390,8 @@ def read_nossd_log(command, std_type):
             INFO_DICT["last_time_plot"] = last_time_plot[0]
         elif plot_done:
             INFO_DICT["mineable_plots"] += 1
-        else: pass
+        else:
+            pass
 
         asyncio.run_coroutine_threadsafe(NoSSD_work_queue.put(log), loop)
         while NoSSD_work_queue.qsize() > 7:
@@ -1202,6 +1408,8 @@ if __name__ == "__main__":
         CONFIG = {}
     if "PASSWORD" not in CONFIG:
         CONFIG["PASSWORD"] = "12345"
+    if "ADMIN_PASSWORD" not in CONFIG:
+        CONFIG["ADMIN_PASSWORD"] = CONFIG["PASSWORD"]
     if "RUN_AT_STARTUP" not in CONFIG:
         CONFIG["RUN_AT_STARTUP"] = True
     if "SLAVE_PC" not in CONFIG:
@@ -1254,7 +1462,8 @@ if __name__ == "__main__":
         NoSSD_thread = threading.Thread(target=read_nossd_log, args=(command, "out",))
         NoSSD_thread.start()
 
-    INFO_DICT = {"worker": "unknown", "mineable_plots": 0, "shares24": 0, "shares1": 0, "max_shares24": 1, "max_shares1": 1, "last_time_plot": "unknown"}
+    INFO_DICT = {"worker": "unknown", "mineable_plots": 0, "shares24": 0, "shares1": 0, "max_shares24": 1,
+                 "max_shares1": 1, "last_time_plot": "unknown"}
     if CONFIG["SLAVE_PC"]:
         main_slave()
     else:

@@ -1,10 +1,11 @@
-BOT_TOKEN: "44444444444444:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-NoSSD_PATCH: "/home/bds89/Документы/nossd"
-NoSSD_PARAMS: "-a xch18s44l93zegl3p3awkhfdwy5hhuj74wvkuzndvasjgkx7w37s4dsqpumnje -c 10 -w bds89 -d,p /media/bds89/Новый том1/test"
-PASSWORD: "12345"
-RUN_AT_STARTUP: False
-SUDO_PASS: "0"
-SLAVE_PC: False
+BOT_TOKEN: "4444444444:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+NoSSD_PATCH: "/home/bds89/nossd"
+NoSSD_PARAMS: "-a xch18s44l93zegl3p3awkhfdwy5hhuj74wvkuzndvasjgkx7w37s4dsqpumnje -c 15 -w bds89 -d,p media/bds89/test"
+PASSWORD: '1234'
+ADMIN_PASSWORD: '12345'
+RUN_AT_STARTUP: false
+SUDO_PASS: '0'
+SLAVE_PC: false
 NODES:
-  - 192.168.0.138
-  - 192.168.0.55
+- 192.168.0.138
+- 192.168.0.55
