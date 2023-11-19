@@ -74,5 +74,6 @@ nvidia-smi
 
   - add admin settings.
   - System info refreshing 5 seconds.
+  - add netspace and wallet balance
   - bug fixes
 </details>

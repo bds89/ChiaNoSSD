@@ -18,6 +18,7 @@ import yaml
 import xmltodict
 
 import psutil
+from requests import Session
 from telegram import ReplyKeyboardRemove, Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, error
 from telegram.ext import (
     Application,
@@ -391,15 +392,12 @@ async def update_message(update, context, text, keyboard):
     if len(text) > 4096:
         with open(dir_script + '/bot_send.txt', 'w') as f:
             f.write(text)
-            context.chat_data["last_message"] = await update.message.reply_text(
-                "Very long text for TG message", parse_mode="HTML"
-            )
-            context.chat_data["last_message"] = await update.message.reply_document(
-                document=open(dir_script + '/bot_send.txt', 'rb'),
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-            if os.path.exists(dir_script + '/bot_send.txt'):
-                os.remove(dir_script + '/bot_send.txt')
+        context.chat_data["last_message"] = await update.message.reply_document(
+            document=open(dir_script + '/bot_send.txt', 'rb'),
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        if os.path.exists(dir_script + '/bot_send.txt'):
+            os.remove(dir_script + '/bot_send.txt')
     else:
         try:
             if update.message:
@@ -620,6 +618,28 @@ async def farm_status(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=
                  f"Shares 24h: {summary['shares24']}")
     else:
         return {"status": status, "info": INFO_DICT}
+
+    #try to get netspace and balance
+    try:
+        url = 'https://xchscan.com/api/netspace'
+        session = Session()
+        response = session.get(url)
+        data = json.loads(response.text)
+        convert = 1024 ** 6
+        net_space = round(int(data["netspace"]) / convert, 2)
+
+        address = re.findall(r"-a (xch\w+)", CONFIG["NoSSD_PARAMS"])
+        url = f'https://xchscan.com/api/account/balance?address={address[0]}'
+        session = Session()
+        response = session.get(url)
+        data = json.loads(response.text)
+        balance = round(float(data["xch"]), 5)
+
+        text += f'\n\nYour balance: {balance} XCH\nNet space: {net_space} EiB'
+
+    except Exception as e:
+        logger.warning(str(e))
+
     await update_message(update, context, text, standart_keyboard)
     return ROOT
 
