@@ -393,8 +393,10 @@ async def update_message(update, context, text, keyboard):
         with open(dir_script + '/bot_send.txt', 'w') as f:
             f.write(text)
         context.chat_data["last_message"] = await update.message.reply_document(
-            document=open(dir_script + '/bot_send.txt', 'rb'),
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            document=open(dir_script + '/bot_send.txt', 'rb')
+        )
+        context.chat_data["last_message"] = await update.message.reply_text(
+            "Message too long for TG", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
         )
         if os.path.exists(dir_script + '/bot_send.txt'):
             os.remove(dir_script + '/bot_send.txt')
