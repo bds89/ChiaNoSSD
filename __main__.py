@@ -312,8 +312,8 @@ async def tcp_client(host, port, message, comand=False, timeout=20) -> any:
     fut = reader.read()
     try:
         data = await asyncio.wait_for(fut, timeout)
-    except asyncio.exceptions.TimeoutError:
-        logger.error(f"TimeoutError {host}")
+    except Exception as e:
+        logger.error(f"{e} {host}")
         return f"TimeoutError {host}"
 
     try:
