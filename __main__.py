@@ -389,35 +389,37 @@ def num_to_scale(percent_value, numsimb=15, add_percent=True, prefix="", value="
 
 
 async def update_message(update, context, text, keyboard):
-    if len(text) > 4096:
-        with open(dir_script + '/bot_send.txt', 'w') as f:
-            f.write(text)
-        context.chat_data["last_message"] = await update.message.reply_document(
-            document=open(dir_script + '/bot_send.txt', 'rb')
-        )
-        context.chat_data["last_message"] = await update.message.reply_text(
-            "Message too long for TG", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
-        )
-        if os.path.exists(dir_script + '/bot_send.txt'):
-            os.remove(dir_script + '/bot_send.txt')
-    else:
-        try:
-            if update.message:
+    try:
+        if update.message:
+            if len(text) > 4096:
+                with open(dir_script + '/bot_send.txt', 'w') as f:
+                    f.write(text)
+                context.chat_data["last_message"] = await update.message.reply_document(
+                    document=open(dir_script + '/bot_send.txt', 'rb')
+                )
+                context.chat_data["last_message"] = await update.message.reply_text(
+                    "Message too long for TG", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+                )
+                if os.path.exists(dir_script + '/bot_send.txt'):
+                    os.remove(dir_script + '/bot_send.txt')
+            else:
                 context.chat_data["last_message"] = await update.message.reply_text(
                     text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
                 )
+        else:
+            if len(text) > 4096:
+                text = text[:4096]
+            if update.callback_query.message.text != text or update.callback_query.message.reply_markup != InlineKeyboardMarkup(
+                    keyboard):
+                await update.callback_query.answer()
+                context.chat_data["last_message"] = await update.callback_query.edit_message_text(text,
+                                                                                                  reply_markup=InlineKeyboardMarkup(
+                                                                                                      keyboard),
+                                                                                                  parse_mode="HTML")
             else:
-                if update.callback_query.message.text != text or update.callback_query.message.reply_markup != InlineKeyboardMarkup(
-                        keyboard):
-                    await update.callback_query.answer()
-                    context.chat_data["last_message"] = await update.callback_query.edit_message_text(text,
-                                                                                                      reply_markup=InlineKeyboardMarkup(
-                                                                                                          keyboard),
-                                                                                                      parse_mode="HTML")
-                else:
-                    await update.callback_query.answer()
-        except error.BadRequest as e:
-            logger.warning(str(e))
+                await update.callback_query.answer()
+    except error.BadRequest as e:
+        logger.warning(str(e))
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -714,15 +716,23 @@ async def sys_info(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=Fal
             used_RAM = psutil.virtual_memory()[2]
             used_SWAP = psutil.swap_memory()[3]
 
-            CPU_freq = round(psutil.cpu_freq(percpu=False)[0])
-            CPU_temp = psutil.sensors_temperatures(fahrenheit=False)["coretemp"][0][1]
 
-            fan_list = psutil.sensors_fans()
-            FAN = "no fan"
-            for key, value in fan_list.items():
-                for i in value:
-                    if i[1] > 0:
-                        FAN = i[1]
+            CPU_freq = round(psutil.cpu_freq(percpu=False)[0])
+
+            try:
+                CPU_temp = psutil.sensors_temperatures(fahrenheit=False)["coretemp"][0][1]
+            except:
+                CPU_temp = "No CPU temp"
+
+            try:
+                fan_list = psutil.sensors_fans()
+                FAN = "no fan"
+                for key, value in fan_list.items():
+                    for i in value:
+                        if i[1] > 0:
+                            FAN = i[1]
+            except:
+                FAN = "no fan"
 
             used_CPU = psutil.cpu_percent(percpu=False)
 
