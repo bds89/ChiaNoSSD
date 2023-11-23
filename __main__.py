@@ -938,6 +938,7 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         adm_keyboard = [
             [
                 InlineKeyboardButton(f"User list", callback_data=f"settings_adm_user_list"),
+                InlineKeyboardButton(f"NoSSD params", callback_data=f"settings_adm_params"),
             ],
             [
                 InlineKeyboardButton(f"Adm pass", callback_data=f"settings_adm_adm_pass"),
@@ -945,7 +946,7 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             ],
             [
                 InlineKeyboardButton(f"Run at start", callback_data=f"settings_adm_run"),
-                InlineKeyboardButton(f"NoSSD params", callback_data=f"settings_adm_params"),
+                InlineKeyboardButton(f"USB not sleep", callback_data=f"settings_adm_notsleep"),
             ]
         ]
 
@@ -953,7 +954,8 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             adm_text = (f'Admin password: {adm_pass}\n'
                         f'User password {usr_pass}\n'
                         f'Run at startup: {str(CONFIG["RUN_AT_STARTUP"])}\n'
-                        f'NoSSD parameters: {CONFIG["NoSSD_PARAMS"]}\n')
+                        f'NoSSD parameters: {CONFIG["NoSSD_PARAMS"]}\n'
+                        f'USB always work: {str(CONFIG["NOT_SLEEP"])}\n')
 
         else:
             answer = await tcp_client(CONFIG["NODES"][int(context.user_data["farm"]) - 1], 2605,
@@ -963,7 +965,8 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             adm_text = (f'Admin password: {adm_pass}\n'
                         f'User password {usr_pass}\n'
                         f'Run at startup: {answer["Run at startup"]}\n'
-                        f'NoSSD parameters: {answer["NoSSD parameters"]}\n')
+                        f'NoSSD parameters: {answer["NoSSD parameters"]}\n'
+                        f'USB always work: {answer["Not sleep"]}\n')
     else:
         adm_text = ""
         adm_keyboard = [[]]
@@ -1001,6 +1004,17 @@ async def set_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         else:
             answer = await tcp_client(CONFIG["NODES"][int(context.user_data["farm"]) - 1], 2605,
                                       {"code": 200, "data": {"request": "POST", "params": {'settings_adm_run': ""}}},
+                                      True)
+            if type(answer) is str:
+                logging.error(answer)
+    elif update.callback_query.data == "settings_adm_notsleep":
+        if not context.user_data or "farm" not in context.user_data or context.user_data["farm"] == "1":
+            CONFIG["NOT_SLEEP"] = not CONFIG["NOT_SLEEP"]
+            with open(dir_script + "/config.yaml", "w") as f:
+                f.write(yaml.dump(CONFIG, sort_keys=False))
+        else:
+            answer = await tcp_client(CONFIG["NODES"][int(context.user_data["farm"]) - 1], 2605,
+                                      {"code": 200, "data": {"request": "POST", "params": {'settings_adm_notsleep': ""}}},
                                       True)
             if type(answer) is str:
                 logging.error(answer)
@@ -1093,7 +1107,7 @@ async def set_adm_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def remote_settings(request, params):  # only for slave pc
     if request == "GET":
-        return {'Run at startup': str(CONFIG["RUN_AT_STARTUP"]), 'NoSSD parameters': CONFIG["NoSSD_PARAMS"]}
+        return {'Run at startup': str(CONFIG["RUN_AT_STARTUP"]), 'NoSSD parameters': CONFIG["NoSSD_PARAMS"], 'Not sleep': CONFIG["NOT_SLEEP"]}
     elif request == "POST":
         if "settings_adm_run" in params:
             CONFIG["RUN_AT_STARTUP"] = not CONFIG["RUN_AT_STARTUP"]
@@ -1102,6 +1116,11 @@ async def remote_settings(request, params):  # only for slave pc
             return "True"
         if "settings_adm_params" in params:
             CONFIG["NoSSD_PARAMS"] = params["settings_adm_params"]
+            with open(dir_script + "/config.yaml", "w") as f:
+                f.write(yaml.dump(CONFIG, sort_keys=False))
+            return "True"
+        if "settings_adm_notsleep" in params:
+            CONFIG["NOT_SLEEP"] = not CONFIG["NOT_SLEEP"]
             with open(dir_script + "/config.yaml", "w") as f:
                 f.write(yaml.dump(CONFIG, sort_keys=False))
             return "True"
@@ -1251,7 +1270,8 @@ def main() -> None:
                        CallbackQueryHandler(set_settings, pattern='settings_adm_user_pass'),
                        CallbackQueryHandler(set_settings, pattern='settings_adm_run'),
                        CallbackQueryHandler(set_settings, pattern='settings_adm_params'),
-                       CallbackQueryHandler(set_settings, pattern='settings_adm_user_list')],
+                       CallbackQueryHandler(set_settings, pattern='settings_adm_user_list'),
+                       CallbackQueryHandler(set_settings, pattern='settings_adm_notsleep')],
             GET_SETTINGS: [CommandHandler("start", start),
                            CommandHandler("cancel", cancel),
                            CommandHandler("logout", logout),
@@ -1296,7 +1316,7 @@ def kill_child_processes(parent_pid, sig=signal.SIGTERM):
         process.send_signal(sig)
 
 
-def run(command, std_type):
+def run(std_type):
     while True:
         if RUN_STATE == IDLE:
             time.sleep(3)
@@ -1322,6 +1342,8 @@ def run(command, std_type):
 
         if RUN_STATE == START:
             if not "process" in locals() or ("process" in locals() and process.poll() != None):
+                command = str(CONFIG["NoSSD_PATCH"]) + "/client "
+                command += str(CONFIG["NoSSD_PARAMS"])
                 process = subprocess.Popen(command, stdout=subprocess.PIPE, stdin=subprocess.PIPE,
                                            stderr=subprocess.PIPE,
                                            shell=True, encoding="utf-8", bufsize=1, universal_newlines=True)
@@ -1364,7 +1386,7 @@ def run(command, std_type):
             yield line
 
 
-def read_nossd_log(command, std_type):
+def read_nossd_log(std_type):
     class Shares:
         def __init__(self):
             self.shares = []
@@ -1387,7 +1409,7 @@ def read_nossd_log(command, std_type):
                 self.shares1 += 1
 
     shares = Shares()
-    for log in run(command, std_type):
+    for log in run(std_type):
         print(colored(log, 'green'))
         error_log = re.findall(r"(\d{2}:\d{2}:\d{2} ERROR:.+$)", log)
         warning_log = re.findall(r"(\d{2}:\d{2}:\d{2} WARNING:.+$)", log)
@@ -1429,6 +1451,16 @@ def read_nossd_log(command, std_type):
         while NoSSD_work_queue.qsize() > 7:
             NoSSD_work_queue.get_nowait()
 
+def not_sleep():
+    while True:
+        if CONFIG["NOT_SLEEP"]:
+            disk_list = get_disk_list(10 * 1000000000)
+            for dev, disk in disk_list.items():
+                if "usb" in disk[4]:
+                    f = open(disk[4] + "/sleep.txt", 'w')
+                    f.write(str(datetime.datetime.now()))
+                    f.close()
+        time.sleep(60)
 
 if __name__ == "__main__":
     dir_script = get_script_dir()
@@ -1446,6 +1478,8 @@ if __name__ == "__main__":
         CONFIG["RUN_AT_STARTUP"] = True
     if "SLAVE_PC" not in CONFIG:
         CONFIG["SLAVE_PC"] = False
+    if "NOT_SLEEP" not in CONFIG:
+        CONFIG["NOT_SLEEP"] = False
 
     if "NODES" in CONFIG:
         standart_keyboard = [
@@ -1485,14 +1519,17 @@ if __name__ == "__main__":
 
     # Run miner thread
     if "NoSSD_PATCH" in CONFIG:
-        command = str(CONFIG["NoSSD_PATCH"]) + "/client "
-        command += str(CONFIG["NoSSD_PARAMS"])
         if CONFIG["RUN_AT_STARTUP"]:
             RUN_STATE = START
         else:
             RUN_STATE = IDLE
-        NoSSD_thread = threading.Thread(target=read_nossd_log, args=(command, "out",))
+        NoSSD_thread = threading.Thread(target=read_nossd_log, args=("out",))
         NoSSD_thread.start()
+
+    # Run not sleep thread
+    NoSleep_thread = threading.Thread(target=not_sleep)
+    NoSleep_thread.start()
+
 
     INFO_DICT = {"worker": "unknown", "mineable_plots": 0, "shares24": 0, "shares1": 0, "max_shares24": 1,
                  "max_shares1": 1, "last_time_plot": "unknown"}

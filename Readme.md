@@ -49,6 +49,7 @@ I use exactly the same config, only with the `SLAVE_PC` parameter. Can be remove
 - `IP` - Each node deploys a server to receive and send messages. 
 The script will try to find its own IP, if this does not happen and the script is deployed on 127.0.0.1, 
 this parameter can be specified explicitly.Can be removed if you only have one node.
+- `NOT_SLEEP` - If `True`, every 60 seconds bot will write on disks, with "usb" in mounpoint, simple file "sleep.txt" so that these drives do not go into power saving mode
 
 3. Dependencies
 - for collect hdds's temperatures you must install a `smartmontools`, not necessary
@@ -75,5 +76,12 @@ nvidia-smi
   - add admin settings.
   - System info refreshing 5 seconds.
   - add netspace and wallet balance
+  - bug fixes
+</details>
+
+<details>
+  <summary>1.1</summary>
+
+  - add `NOT_SLEEP` parameter,
   - bug fixes
 </details>
