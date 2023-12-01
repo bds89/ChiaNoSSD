@@ -50,6 +50,7 @@ I use exactly the same config, only with the `SLAVE_PC` parameter. Can be remove
 The script will try to find its own IP, if this does not happen and the script is deployed on 127.0.0.1, 
 this parameter can be specified explicitly.Can be removed if you only have one node.
 - `NOT_SLEEP` - If `True`, every 60 seconds bot will write on disks, with "usb" in mounpoint, simple file "sleep.txt" so that these drives do not go into power saving mode
+- `SMARTDOG` - If `True`, the bot will send a notification when critical SMART values of your disks change
 
 3. Dependencies
 - for collect hdds's temperatures you must install a `smartmontools`, not necessary
@@ -84,4 +85,10 @@ nvidia-smi
 
   - add `NOT_SLEEP` parameter,
   - bug fixes
+</details>
+
+<details>
+  <summary>1.2</summary>
+
+  - add `SMARTDOG` parameter
 </details>

@@ -623,23 +623,45 @@ async def farm_status(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=
     else:
         return {"status": status, "info": INFO_DICT}
 
-    #try to get netspace and balance
+    #try to get netspace, price and balance
     try:
+        address = re.findall(r"-a (xch\w+)", CONFIG["NoSSD_PARAMS"])
+        url = f'https://xchscan.com/api/account/balance?address={address[0]}'
+        session = Session()
+        response = session.get(url, timeout=2)
+        data = json.loads(response.text)
+        balance = round(float(data["xch"]), 5)
+
+        url = f'https://xchscan.com/api/chia-price'
+        session = Session()
+        response = session.get(url, timeout=2)
+        data = json.loads(response.text)
+        price = float(data["usd"])
+
         url = 'https://xchscan.com/api/netspace'
         session = Session()
-        response = session.get(url)
+        response = session.get(url, timeout=2)
         data = json.loads(response.text)
         convert = 1024 ** 6
         net_space = round(int(data["netspace"]) / convert, 2)
 
-        address = re.findall(r"-a (xch\w+)", CONFIG["NoSSD_PARAMS"])
-        url = f'https://xchscan.com/api/account/balance?address={address[0]}'
-        session = Session()
-        response = session.get(url)
-        data = json.loads(response.text)
-        balance = round(float(data["xch"]), 5)
-
-        text += f'\n\nYour balance: {balance} XCH\nNet space: {net_space} EiB'
+        k = 9467476972000000
+        if time.time() > 1994846400:
+            k /= 16
+        elif time.time() > 1900152000:
+            k /= 8
+        elif time.time() > 1805457600:
+            k /= 4
+        elif time.time() > 1710849600:
+            k /= 2
+        else: pass
+        daily = round(((summary['shares24'] / int(data["netspace"]) * k) / 0.965), 4)
+        fee = round((daily * 0.035), 4)
+        text += (f'\n\nYour balance: {balance} XCH\n'
+                 f'Net space: {net_space} EiB\n'
+                 f'Chia price: {price} $\n'
+                 f'XCH per day: <b>{daily}</b> (-fee:{fee})\n'
+                 f'USD per day: {round(((daily - fee)*price), 2)} $')
 
     except Exception as e:
         logger.warning(str(e))
@@ -665,8 +687,6 @@ def disk_info(disk_info_queue: queue, context: ContextTypes.DEFAULT_TYPE):
     if 'disk_info' in context.bot_data and time.time() - context.bot_data['disk_info']['time'] < 30:
         disk_info_queue.put(context.bot_data['disk_info']['data'])
         return
-    if not "SUDO_PASS" in CONFIG:
-        CONFIG["SUDO_PASS"] = "0"
 
     disk_list = get_disk_list(10 * 1000000000)
     disk_list_keys = list(disk_list.keys())
@@ -938,7 +958,6 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         adm_keyboard = [
             [
                 InlineKeyboardButton(f"User list", callback_data=f"settings_adm_user_list"),
-                InlineKeyboardButton(f"NoSSD params", callback_data=f"settings_adm_params"),
             ],
             [
                 InlineKeyboardButton(f"Adm pass", callback_data=f"settings_adm_adm_pass"),
@@ -947,6 +966,10 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             [
                 InlineKeyboardButton(f"Run at start", callback_data=f"settings_adm_run"),
                 InlineKeyboardButton(f"USB not sleep", callback_data=f"settings_adm_notsleep"),
+            ],
+            [
+                InlineKeyboardButton(f"NoSSD params", callback_data=f"settings_adm_params"),
+                InlineKeyboardButton(f"SmartDog", callback_data=f"settings_adm_smartdog"),
             ]
         ]
 
@@ -955,7 +978,8 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                         f'User password {usr_pass}\n'
                         f'Run at startup: {str(CONFIG["RUN_AT_STARTUP"])}\n'
                         f'NoSSD parameters: {CONFIG["NoSSD_PARAMS"]}\n'
-                        f'USB always work: {str(CONFIG["NOT_SLEEP"])}\n')
+                        f'USB always work: {str(CONFIG["NOT_SLEEP"])}\n'
+                        f'SmartDog: {str(CONFIG["SMARTDOG"])}\n')
 
         else:
             answer = await tcp_client(CONFIG["NODES"][int(context.user_data["farm"]) - 1], 2605,
@@ -966,7 +990,8 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                         f'User password {usr_pass}\n'
                         f'Run at startup: {answer["Run at startup"]}\n'
                         f'NoSSD parameters: {answer["NoSSD parameters"]}\n'
-                        f'USB always work: {answer["Not sleep"]}\n')
+                        f'USB always work: {answer["Not sleep"]}\n'
+                        f'SmartDog: {answer["Smartdog"]}\n')
     else:
         adm_text = ""
         adm_keyboard = [[]]
@@ -1015,6 +1040,17 @@ async def set_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         else:
             answer = await tcp_client(CONFIG["NODES"][int(context.user_data["farm"]) - 1], 2605,
                                       {"code": 200, "data": {"request": "POST", "params": {'settings_adm_notsleep': ""}}},
+                                      True)
+            if type(answer) is str:
+                logging.error(answer)
+    elif update.callback_query.data == "settings_adm_smartdog":
+        if not context.user_data or "farm" not in context.user_data or context.user_data["farm"] == "1":
+            CONFIG["SMARTDOG"] = not CONFIG["SMARTDOG"]
+            with open(dir_script + "/config.yaml", "w") as f:
+                f.write(yaml.dump(CONFIG, sort_keys=False))
+        else:
+            answer = await tcp_client(CONFIG["NODES"][int(context.user_data["farm"]) - 1], 2605,
+                                      {"code": 200, "data": {"request": "POST", "params": {'settings_adm_smartdog': ""}}},
                                       True)
             if type(answer) is str:
                 logging.error(answer)
@@ -1107,7 +1143,7 @@ async def set_adm_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def remote_settings(request, params):  # only for slave pc
     if request == "GET":
-        return {'Run at startup': str(CONFIG["RUN_AT_STARTUP"]), 'NoSSD parameters': CONFIG["NoSSD_PARAMS"], 'Not sleep': CONFIG["NOT_SLEEP"]}
+        return {'Run at startup': str(CONFIG["RUN_AT_STARTUP"]), 'NoSSD parameters': CONFIG["NoSSD_PARAMS"], 'Not sleep': CONFIG["NOT_SLEEP"], 'Smartdog': CONFIG["SMARTDOG"]}
     elif request == "POST":
         if "settings_adm_run" in params:
             CONFIG["RUN_AT_STARTUP"] = not CONFIG["RUN_AT_STARTUP"]
@@ -1121,6 +1157,11 @@ async def remote_settings(request, params):  # only for slave pc
             return "True"
         if "settings_adm_notsleep" in params:
             CONFIG["NOT_SLEEP"] = not CONFIG["NOT_SLEEP"]
+            with open(dir_script + "/config.yaml", "w") as f:
+                f.write(yaml.dump(CONFIG, sort_keys=False))
+            return "True"
+        if "settings_adm_smartdog" in params:
+            CONFIG["SMARTDOG"] = not CONFIG["SMARTDOG"]
             with open(dir_script + "/config.yaml", "w") as f:
                 f.write(yaml.dump(CONFIG, sort_keys=False))
             return "True"
@@ -1271,7 +1312,8 @@ def main() -> None:
                        CallbackQueryHandler(set_settings, pattern='settings_adm_run'),
                        CallbackQueryHandler(set_settings, pattern='settings_adm_params'),
                        CallbackQueryHandler(set_settings, pattern='settings_adm_user_list'),
-                       CallbackQueryHandler(set_settings, pattern='settings_adm_notsleep')],
+                       CallbackQueryHandler(set_settings, pattern='settings_adm_notsleep'),
+                       CallbackQueryHandler(set_settings, pattern='settings_adm_smartdog')],
             GET_SETTINGS: [CommandHandler("start", start),
                            CommandHandler("cancel", cancel),
                            CommandHandler("logout", logout),
@@ -1452,6 +1494,21 @@ def read_nossd_log(std_type):
             NoSSD_work_queue.get_nowait()
 
 def not_sleep():
+    disk_smart_dict = {}
+    famous_smart_attr = ["Raw_Read_Error_Rate",
+                        "Power_Cycle_Count",
+                        "Reallocated_Sector_Ct",
+                        "Seek_Error_Rate",
+                        "Spin_Retry_Count",
+                        "Helium_Condition_Lower",
+                        "Helium_Condition_Upper",
+                        "G-Sense_Error_Rate",
+                        "Power-Off_Retract_Count",
+                        "Load_Cycle_Count",
+                        "Reallocated_Event_Count",
+                        "Current_Pending_Sector",
+                        "Offline_Uncorrectable",
+                        "UDMA_CRC_Error_Count"]
     while True:
         if CONFIG["NOT_SLEEP"]:
             disk_list = get_disk_list(10 * 1000000000)
@@ -1460,6 +1517,37 @@ def not_sleep():
                     f = open(disk[4] + "/sleep.txt", 'w')
                     f.write(str(datetime.datetime.now()))
                     f.close()
+
+        #smartdog)
+        now = datetime.datetime.now()
+        if (CONFIG["SMARTDOG"] and now.hour == 12 and now.minute == 0) or (CONFIG["SMARTDOG"] and not disk_smart_dict):
+            logger.info("Updating SMART info")
+            text = ""
+            if not CONFIG["NOT_SLEEP"]: disk_list = get_disk_list(10 * 1000000000)
+            for dev, disk in disk_list.items():
+                p = subprocess.Popen(['sudo', '-S', 'smartctl', '-A', '-j', dev], stdout=subprocess.PIPE,
+                                     stdin=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+                cli = p.communicate(CONFIG["SUDO_PASS"] + '\n')[0]
+                try:
+                    data = json.loads(cli)
+                except json.decoder.JSONDecodeError:
+                    continue
+                if not dev in disk_smart_dict:
+                    disk_smart_dict[dev] = {}
+                if "ata_smart_attributes" in data:
+                    for attr in data["ata_smart_attributes"]["table"]:
+                        if attr["name"] in famous_smart_attr:
+                            if attr["name"] in disk_smart_dict[dev]:
+                                if disk_smart_dict[dev][attr["name"]]["value"] != attr["value"]:
+                                    text += f'''WARNING. S.M.A.R.T: {dev} ({disk[4]}) value {attr["name"]} 
+                                    changed from {disk_smart_dict[dev][attr["name"]]["value"]} 
+                                    to {attr["value"]}. Tresh: {attr["thresh"]}\n\n'''
+                                    disk_smart_dict[dev][attr["name"]]["value"] = attr["value"]
+                            else:
+                                disk_smart_dict[dev][attr["name"]] = {"value": attr["value"],
+                                                                      "raw": attr["raw"]["value"]}
+            if text:
+                asyncio.run_coroutine_threadsafe(NoSSD_err_queue.put(text), loop)
         time.sleep(60)
 
 if __name__ == "__main__":
@@ -1480,6 +1568,10 @@ if __name__ == "__main__":
         CONFIG["SLAVE_PC"] = False
     if "NOT_SLEEP" not in CONFIG:
         CONFIG["NOT_SLEEP"] = False
+    if "SUDO_PASS" not in CONFIG:
+        CONFIG["SUDO_PASS"] = "0"
+    if "SMARTDOG" not in CONFIG:
+        CONFIG["SMARTDOG"] = False
 
     if "NODES" in CONFIG:
         standart_keyboard = [
@@ -1533,6 +1625,16 @@ if __name__ == "__main__":
 
     INFO_DICT = {"worker": "unknown", "mineable_plots": 0, "shares24": 0, "shares1": 0, "max_shares24": 1,
                  "max_shares1": 1, "last_time_plot": "unknown"}
+
+    #Turn off powersave
+    disk_list = get_disk_list(10 * 1000000000)
+    for dev in disk_list.keys():
+        command = ("sudo -S hdparm -B 254 -S 0 " + dev).split()
+        p = subprocess.Popen(command, stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE,
+                             universal_newlines=True)
+        cli = p.communicate(CONFIG["SUDO_PASS"] + '\n')[0]
+
+
     if CONFIG["SLAVE_PC"]:
         main_slave()
     else:
