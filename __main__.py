@@ -774,8 +774,8 @@ async def sys_info(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=Fal
                                       f"Mem util: {gpu['utilization']['memory_util']}"),
                                      (f"GPU temp: {gpu['temperature']['gpu_temp']}",
                                       f"Mem temp: {gpu['temperature']['memory_temp']}"),
-                                     (f"Power: {gpu['power_readings']['power_draw']}",
-                                      f"{gpu['power_readings']['power_limit']}"),
+                                     (f"Power: {gpu['gpu_power_readings']['power_draw']}",
+                                      f"{gpu['gpu_power_readings']['current_power_limit']}"),
                                      (f"GPU: {gpu['clocks']['graphics_clock']}",
                                       f"Mem: {gpu['clocks']['mem_clock']}\n")):
                             text += '{0:<20} {1:<20}'.format(*args) + "\n"
@@ -787,8 +787,8 @@ async def sys_info(update: Update, context: ContextTypes.DEFAULT_TYPE, slave=Fal
                                   f"Mem util: {gpu['utilization']['memory_util']}"),
                                  (f"GPU temp: {gpu['temperature']['gpu_temp']}",
                                   f"Mem temp: {gpu['temperature']['memory_temp']}"),
-                                 (f"Power: {gpu['power_readings']['power_draw']}",
-                                  f"{gpu['power_readings']['power_limit']}"),
+                                 (f"Power: {gpu['gpu_power_readings']['power_draw']}",
+                                  f"{gpu['gpu_power_readings']['current_power_limit']}"),
                                  (f"GPU: {gpu['clocks']['graphics_clock']}", f"Mem: {gpu['clocks']['mem_clock']}\n")):
                         text += '{0:<20} {1:<20}'.format(*args) + "\n"
             except Exception as e:
@@ -1334,7 +1334,7 @@ def main() -> None:
     application.add_handler(conv_handler)
 
     # Run the bot until the user presses Ctrl-C
-    application.run_polling(connect_timeout=10, pool_timeout=10, read_timeout=5, write_timeout=5,
+    application.run_polling(connect_timeout=10, pool_timeout=10, read_timeout=10, write_timeout=10,
                             allowed_updates=Update.ALL_TYPES)
 
 
@@ -1546,6 +1546,12 @@ def not_sleep():
                             else:
                                 disk_smart_dict[dev][attr["name"]] = {"value": attr["value"],
                                                                       "raw": attr["raw"]["value"]}
+                # Turn off powersave
+                command = ("sudo -S hdparm -B 254 -S 0 " + dev).split()
+                p = subprocess.Popen(command, stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE,
+                                     universal_newlines=True)
+                cli = p.communicate(CONFIG["SUDO_PASS"] + '\n')[0]
+
             if text:
                 asyncio.run_coroutine_threadsafe(NoSSD_err_queue.put(text), loop)
         time.sleep(60)
@@ -1625,15 +1631,6 @@ if __name__ == "__main__":
 
     INFO_DICT = {"worker": "unknown", "mineable_plots": 0, "shares24": 0, "shares1": 0, "max_shares24": 1,
                  "max_shares1": 1, "last_time_plot": "unknown"}
-
-    #Turn off powersave
-    disk_list = get_disk_list(10 * 1000000000)
-    for dev in disk_list.keys():
-        command = ("sudo -S hdparm -B 254 -S 0 " + dev).split()
-        p = subprocess.Popen(command, stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE,
-                             universal_newlines=True)
-        cli = p.communicate(CONFIG["SUDO_PASS"] + '\n')[0]
-
 
     if CONFIG["SLAVE_PC"]:
         main_slave()
